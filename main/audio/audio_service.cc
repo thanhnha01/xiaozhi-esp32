@@ -809,8 +809,10 @@ void AudioService::BeginExternalPlayback() {
     last_output_time_ = std::chrono::steady_clock::now();
 }
 
-void AudioService::EndExternalPlayback() {
-    ResetDecoder();
+void AudioService::EndExternalPlayback(bool discard_queued_audio) {
+    // Yield to TTS/notifications without deleting freshly arrived Opus frames.
+    // Normal music teardown still discards stale queued audio by default.
+    if (discard_queued_audio) ResetDecoder();
     last_output_time_ = std::chrono::steady_clock::now();
     external_playback_active_.store(false);
     audio_queue_cv_.notify_all();

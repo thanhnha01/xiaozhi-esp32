@@ -1,6 +1,7 @@
 #ifndef HILILY_MUSIC_PLAYER_H
 #define HILILY_MUSIC_PLAYER_H
 #include <cstdint>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <freertos/FreeRTOS.h>
@@ -15,10 +16,15 @@ public:
     static HiLilyMusicPlayer& GetInstance();
     void Configure(HiLilyDisplay* display, const char* worker_base);
     bool Play(std::string title, std::string artist = {});
+    bool PlayRadio(std::string station);
     bool Pause();
     bool Resume();
     bool Stop();
     std::string StatusJson();
+    // TTS and spoken notifications take priority over streamed audio.
+    void SetTtsActive(bool active);
+    void SetNotificationActive(bool active);
+    bool HasVoicePriority() const;
     // Optional shortcut for finalized Vietnamese STT commands.
     // This executes locally, without waiting for an LLM tool invocation.
     bool HandleRecognizedSpeech(const std::string& recognized_text);
@@ -36,6 +42,8 @@ private:
     TaskHandle_t task_ = nullptr;
     uint32_t generation_ = 0;
     bool pending_ = false, paused_ = false, active_ = false;
+    std::atomic<bool> tts_active_{false};
+    std::atomic<bool> notification_active_{false};
     uint32_t position_ms_ = 0;
     std::string playback_error_;
 };

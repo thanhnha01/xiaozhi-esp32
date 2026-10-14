@@ -1,4 +1,5 @@
 #include "hilily_music_player.h"
+#include "hilily_stream_source.h"
 #include "hilily_display.h"
 #include "application.h"
 #include "board.h"
@@ -10,12 +11,14 @@
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <esp_heap_caps.h>
 #include <cJSON.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -182,6 +185,31 @@ struct Resampler {
         input_frames = finish;
     }
 };
+// Small 12-band Goertzel spectrum for 240x240 TFT; no FFT heap allocations.
+// Levels are approximate magnitudes, not a calibrated spectrum analyzer.
+void UpdateMusicSpectrum(HiLilyDisplay* display, const std::vector<int16_t>& pcm) {
+    if (!display || pcm.size() < 256) return;
+    constexpr int sample_rate = 24000;
+    constexpr int n = 256;
+    constexpr int freq[12] = {120, 180, 265, 390, 580, 850, 1250, 1850, 2700, 3900, 5600, 8000};
+    std::array<uint8_t, 12> levels{};
+    const size_t step = (pcm.size() - 1) / (n - 1);
+    for (int band = 0; band < 12; ++band) {
+        const float omega = 2.0f * 3.14159265f * freq[band] / sample_rate;
+        const float coeff = 2.0f * std::cos(omega);
+        float q0 = 0, q1 = 0, q2 = 0;
+        for (int j = 0; j < n; ++j) {
+            const float sample = pcm[static_cast<size_t>(j) * step] / 32768.0f;
+            q0 = sample + coeff * q1 - q2;
+            q2 = q1;
+            q1 = q0;
+        }
+        const float power = std::max(0.0f, q1*q1 + q2*q2 - coeff*q1*q2);
+        const int level = static_cast<int>(std::sqrt(power) * 9.0f);
+        levels[band] = static_cast<uint8_t>(std::clamp(level, 0, 100));
+    }
+    display->SetMusicSpectrum(levels);
+}
 }  // namespace
 
 bool HiLilyMusicPlayer::HandleRecognizedSpeech(const std::string& recognized_text) {
@@ -216,6 +244,24 @@ bool HiLilyMusicPlayer::HandleRecognizedSpeech(const std::string& recognized_tex
         if(song.empty()||song.size()>100||artist.size()>100)return false;
         return Play(song,artist);
     }
+    return false;
+}
+
+void HiLilyMusicPlayer::SetTtsActive(bool active) { tts_active_.store(active); }
+void HiLilyMusicPlayer::SetNotificationActive(bool active) { notification_active_.store(active); }
+bool HiLilyMusicPlayer::HasVoicePriority() const {
+    return tts_active_.load() || notification_active_.load();
+}
+
+bool HiLilyMusicPlayer::PlayRadio(std::string station) {
+    // Fixed validated MP3 presets only. Never accept arbitrary HTTP URLs
+    // from a voice transcript or an LLM tool argument.
+    std::transform(station.begin(), station.end(), station.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (station.find("classic") != std::string::npos)
+        return Play("radio:classic");
+    if (station.find("groove") != std::string::npos)
+        return Play("radio:groove");
     return false;
 }
 
@@ -346,16 +392,26 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
     auto* codec = Board::GetInstance().GetAudioCodec();
     if (!codec || !display_) return false;
     Track track;
+    const bool live_radio = title.rfind("radio:", 0) == 0;
     std::string base;
     {
         std::lock_guard<std::mutex> guard(mutex_);
         base = worker_base_;
     }
-    if (!ResolveTrack(base, title, artist, track) || Cancelled(generation)) {
+    if (live_radio) {
+        if (title == "radio:groove") {
+            track.title = "SomaFM Groove Salad";
+            track.audio = "https://ice5.somafm.com/groovesalad-128-mp3";
+        } else if (title == "radio:classic") {
+            track.title = "SomaFM Groove Salad Classic";
+            track.audio = "https://ice5.somafm.com/gsclassic-128-mp3";
+        } else return false;
+        track.artist = "Internet Radio";
+    } else if (!ResolveTrack(base, title, artist, track) || Cancelled(generation)) {
         ESP_LOGW(TAG, "No playable Worker track");
         return false;
     }
-    const std::string lrc = ReadLyrics(base,track.lyric);
+    const std::string lrc = live_radio ? std::string{} : ReadLyrics(base,track.lyric);
     if (Cancelled(generation)) return false;
     // Starting a new song updates metadata but keeps the audio clock at 0.
     display_->SetMusicTrack(track.title, track.artist, track.duration_ms, lrc);
@@ -375,29 +431,18 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
         ESP_LOGE(TAG,"MP3 decoder open failed");
         return false;
     }
-    auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
-    if (!http) { esp_audio_simple_dec_close(decoder); return false; }
-    http->SetTimeout(12000);
-    http->SetHeader("Accept", "audio/mpeg, audio/mp3, application/octet-stream");
-    http->SetHeader("Accept-Encoding", "identity");
-    if (!http->Open("GET",base+track.audio)) {
-        ESP_LOGE(TAG,"Could not open Worker MP3 stream");
-        http->Close();
+    HiLilyStreamSource stream;
+    const std::string stream_url = live_radio ? track.audio : base + track.audio;
+    if (!stream.Start(stream_url, live_radio)) {
         esp_audio_simple_dec_close(decoder);
+        ESP_LOGW(TAG, "Could not start buffered HTTP stream");
         return false;
     }
-    const auto status = http->GetStatusCode();
-    if (!status || *status != 200) {
-        ESP_LOGE(TAG,"Music stream failed HTTP %d",status ? *status : -1);
-        http->Close(); esp_audio_simple_dec_close(decoder);
-        return false;
-    }
-    service.BeginExternalPlayback();
-    codec->EnableOutput(true);
+    bool owns_output = false;
     auto release = [&]() {
-        http->Close();
+        stream.Stop();
         esp_audio_simple_dec_close(decoder);
-        service.EndExternalPlayback();
+        if (owns_output) service.EndExternalPlayback();
     };
     std::array<uint8_t,kInputBlock> input = {};
     std::vector<uint8_t> pending;
@@ -406,9 +451,9 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
     Resampler resampler;
     std::vector<int16_t> playback;
     bool ended = false,success = false,decode_error=false;
-    unsigned consecutive_read_failures = 0;
     uint32_t frames_decoded = 0;
     bool pause_was_reported = false;
+    int64_t next_spectrum_us = 0;
     while (!Cancelled(generation)) {
         // Update LVGL on pause without advancing the audio clock.
         bool paused_now = false;
@@ -421,24 +466,54 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
                 static_cast<uint64_t>(resampler.elapsed_samples)*1000/kOutputHz), !paused_now);
             pause_was_reported = paused_now;
         }
-        if (!AwaitPlay(generation)) break;
-        // When paused, don't read the TCP stream. Keep microphone wake detection alive.
-        if (!ended && pending.size() < kMaxEncoded-kInputBlock) {
-            auto count = http->Read(reinterpret_cast<char*>(input.data()),input.size());
-            if (!count) {
-                // A transient timeout must not tear down the decoder. The
-                // provider may recover without requiring a new MP3 session.
-                if (++consecutive_read_failures > 3) {
-                    ESP_LOGW(TAG,"MP3 stream interrupted after retries");
-                    break;
-                }
-                ESP_LOGW(TAG,"MP3 read timeout (%u/3)",consecutive_read_failures);
-                vTaskDelay(pdMS_TO_TICKS(250 * consecutive_read_failures));
-                continue;
+        // TTS/notifications or a paused session must not retain I2S ownership.
+        // Recheck state while waiting; Stop() always cancels the wait.
+        bool paused_requested;
+        {
+            std::lock_guard<std::mutex> guard(mutex_);
+            paused_requested = paused_;
+        }
+        if (HasVoicePriority() || paused_requested) {
+            if (owns_output) {
+                service.EndExternalPlayback(false);
+                owns_output = false;
             }
-            consecutive_read_failures = 0;
-            if (*count == 0) ended = true;
-            else pending.insert(pending.end(),input.begin(),input.begin()+*count);
+            display_->SetMusicPosition(static_cast<uint32_t>(
+                static_cast<uint64_t>(resampler.elapsed_samples)*1000/kOutputHz), false);
+            while (!Cancelled(generation)) {
+                bool paused;
+                {
+                    std::lock_guard<std::mutex> guard(mutex_);
+                    paused = paused_;
+                }
+                if (!HasVoicePriority() && !paused) break;
+                vTaskDelay(pdMS_TO_TICKS(35));
+            }
+            if (Cancelled(generation)) break;
+        }
+        // Wait until the queued voice frames are drained before reclaiming DAC.
+        while (!owns_output && !service.IsPlaybackIdle() && !Cancelled(generation))
+            vTaskDelay(pdMS_TO_TICKS(30));
+        if (Cancelled(generation)) break;
+        if (!owns_output) {
+            service.BeginExternalPlayback();
+            codec->EnableOutput(true);
+            owns_output = true;
+        }
+        // Fetch from a producer task rather than blocking playback on HTTPS.
+        if (!ended && pending.size() < kMaxEncoded-kInputBlock) {
+            const int count = stream.Read(input.data(), input.size(), [this, generation]() {
+                if (HasVoicePriority() || Cancelled(generation)) return true;
+                std::lock_guard<std::mutex> guard(mutex_);
+                return paused_;
+            });
+            if (count == -2) continue;
+            if (count < 0) {
+                ESP_LOGW(TAG, "Buffered MP3 source failed");
+                break;
+            }
+            if (count == 0) ended = true;
+            else pending.insert(pending.end(),input.begin(),input.begin()+count);
         }
         if (pending.empty()) { if (ended) {success=frames_decoded>0; break;} continue; }
         esp_audio_simple_dec_raw_t raw={};
@@ -473,11 +548,37 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
             resampler.Convert(reinterpret_cast<int16_t*>(pcm.data()),decoded_frames,
                               info.sample_rate,info.channel,playback);
             if (!playback.empty()) {
-                if (!AwaitPlay(generation))break;
                 // OutputData is synchronous: stop/pause is checked again
                 // immediately before submitting each decoded PCM block.
-                if (!AwaitPlay(generation)) break;
+                // Do not drop decoded audio when Pause or TTS interrupts an
+                // output frame; release DAC while the frame stays in memory.
+                while (!Cancelled(generation)) {
+                    bool paused;
+                    {
+                        std::lock_guard<std::mutex> guard(mutex_);
+                        paused = paused_;
+                    }
+                    if (!paused && !HasVoicePriority()) break;
+                    if (owns_output) {
+                        service.EndExternalPlayback(false);
+                        owns_output = false;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(30));
+                }
+                if (Cancelled(generation)) break;
+                while (!owns_output && !service.IsPlaybackIdle() && !Cancelled(generation))
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                if (Cancelled(generation)) break;
+                if (!owns_output) {
+                    service.BeginExternalPlayback();
+                    codec->EnableOutput(true);
+                    owns_output = true;
+                }
                 codec->OutputData(playback);
+                if (esp_timer_get_time() >= next_spectrum_us) {
+                    UpdateMusicSpectrum(display_, playback);
+                    next_spectrum_us = esp_timer_get_time() + 110000;
+                }
                 resampler.elapsed_samples+=playback.size();
                 ++frames_decoded;
                 UpdatePosition(generation,static_cast<uint32_t>(

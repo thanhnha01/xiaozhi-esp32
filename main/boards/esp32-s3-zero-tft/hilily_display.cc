@@ -76,6 +76,7 @@ void HiLilyDisplay::SetMusicTrack(std::string title, std::string artist, uint32_
     std::lock_guard<std::mutex> lock(music_mutex_);
     music_title_=std::move(title); music_artist_=std::move(artist);
     music_duration_ms_=duration_ms; music_position_ms_=0;
+    music_spectrum_.fill(0);
     lyric_lines_.clear();
     for(auto& item:parsed) lyric_lines_.push_back({item.first,std::move(item.second)});
     music_active_=true; music_playing_=false; ++music_revision_;
@@ -92,6 +93,18 @@ void HiLilyDisplay::SetMusicPosition(uint32_t position_ms,bool playing) {
     music_playing_ = playing;
     ++music_revision_;
 }
+void HiLilyDisplay::SetMusicSpectrum(const std::array<uint8_t, 12>& levels) {
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (!music_active_) return;
+        music_spectrum_ = levels;
+        ++music_revision_;
+    }
+    // Main clock ticks only once a second. Explicitly schedule a screen
+    // refresh for ~9Hz spectrum updates, outside the music mutex.
+    Application::GetInstance().Schedule([this]() { UpdateStatusBar(); });
+}
+
 void HiLilyDisplay::ClearMusic() {
     std::lock_guard<std::mutex> lock(music_mutex_);
     music_active_=false; music_playing_=false; lyric_lines_.clear(); ++music_revision_;
@@ -164,6 +177,18 @@ void HiLilyDisplay::SetupUI() {
     lv_obj_set_size(music_progress_,194,5);
     lv_obj_align(music_progress_,LV_ALIGN_BOTTOM_MID,0,-22);
     lv_bar_set_range(music_progress_,0,1000);
+    // 12 compact bands, display-only objects. DSP runs on audio task (~10Hz).
+    for (size_t i = 0; i < music_spectrum_bars_.size(); ++i) {
+        auto* bar = lv_bar_create(music_panel_);
+        music_spectrum_bars_[i] = bar;
+        lv_obj_set_size(bar, 9, 21);
+        lv_obj_align(bar, LV_ALIGN_BOTTOM_LEFT, static_cast<int>(i * 16 + 5), -30);
+        lv_obj_set_style_bg_color(bar, lv_color_hex(0x24364A), 0);
+        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(bar, lv_color_hex(0x38BDF8), LV_PART_INDICATOR);
+        lv_bar_set_range(bar, 0, 100);
+        lv_bar_set_value(bar, 0, LV_ANIM_OFF);
+    }
     lv_obj_add_flag(music_panel_,LV_OBJ_FLAG_HIDDEN);
     Unlock();
 }
@@ -192,6 +217,7 @@ void HiLilyDisplay::UpdateStatusBar(bool update_all) {
     bool music_active,playing;
     uint32_t music_revision, position, duration;
     std::string title, artist, lyric;
+    std::array<uint8_t, 12> levels{};
     {
         std::lock_guard<std::mutex> guard(music_mutex_);
         music_active=music_active_; playing=music_playing_;
@@ -199,6 +225,7 @@ void HiLilyDisplay::UpdateStatusBar(bool update_all) {
         duration=music_duration_ms_;
         if(music_revision!=music_rendered_revision_) {
             title=music_title_; artist=music_artist_;
+            levels=music_spectrum_;
             lyric="Chưa có lời bài hát";
             if(!lyric_lines_.empty()) {
                 auto it=std::upper_bound(lyric_lines_.begin(),lyric_lines_.end(),position,
@@ -226,6 +253,8 @@ void HiLilyDisplay::UpdateStatusBar(bool update_all) {
         lv_label_set_text(music_title_label_,title.c_str());
         lv_label_set_text(music_artist_label_,artist.c_str());
         lv_label_set_text(music_lyric_label_,lyric.c_str());
+        for (size_t i = 0; i < music_spectrum_bars_.size(); ++i)
+            lv_bar_set_value(music_spectrum_bars_[i], levels[i], LV_ANIM_OFF);
         std::string time=FormatTime(position)+" / "+FormatTime(duration);
         lv_label_set_text(music_time_label_,time.c_str());
         lv_bar_set_value(music_progress_,duration ?

@@ -1,0 +1,26 @@
+{
+    "type": "esp32-s3-zero-tft",
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "esp32-s3-zero-tft",
+            "sdkconfig_append": [
+                "CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y",
+                "CONFIG_ESPTOOLPY_FLASHSIZE_16MB=n",
+                "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/v2/4m.csv\"",
+                "CONFIG_SPIRAM=y",
+                "CONFIG_SPIRAM_MODE_OCT=n",
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n",
+                "CONFIG_WAKE_WORD_DISABLED=n",
+                "CONFIG_USE_AFE_WAKE_WORD=y",
+                "CONFIG_SR_WN_WN9_HILILI_TTS=y",
+                "CONFIG_USE_CUSTOM_WAKE_WORD=n",
+                "CONFIG_USE_ESP_WAKE_WORD=n",
+                "CONFIG_SEND_WAKE_WORD_DATA=n",
+                "CONFIG_USE_AUDIO_PROCESSOR=n",
+                "CONFIG_LV_MEM_SIZE_KILOBYTES=256"
+            ]
+        }
+    ]
+}

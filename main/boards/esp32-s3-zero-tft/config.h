@@ -26,7 +26,15 @@
 // TFT ST7789 240x240, four-wire SPI (assumed controller).
 #define DISPLAY_RST_PIN          GPIO_NUM_8
 #define DISPLAY_CS_PIN           GPIO_NUM_9
-#define DISPLAY_DC_PIN           GPIO_NUM_10
+// 18650 -> 100k -> GPIO10 (ADC1_CH9) -> 100k -> GND
+// The LCD DC pin is permanently moved away from ADC.
+#define DISPLAY_DC_PIN           GPIO_NUM_15
+#define BATTERY_ADC_GPIO        GPIO_NUM_10
+// Optional: 5V VBUS -> 100k -> GPIO16 -> 150k -> GND.
+// GPIO16 HIGH means external power detected, NOT proven cell charging.
+#define VBUS_SENSE_GPIO         GPIO_NUM_16
+#define HILILY_WORKER_BASE_URL "https://xiaozhi-master.nguyennha-020201.workers.dev"
+#define HILILY_WORKER_HOME_URL HILILY_WORKER_BASE_URL "/api/display/home"
 #define DISPLAY_MOSI_PIN         GPIO_NUM_11
 #define DISPLAY_CLK_PIN          GPIO_NUM_12
 #define DISPLAY_BACKLIGHT_PIN    GPIO_NUM_13

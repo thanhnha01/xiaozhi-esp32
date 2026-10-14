@@ -5,6 +5,16 @@
 #include "button.h"
 #include "config.h"
 #include "led/single_led.h"
+#include "hilily_display.h"
+#include "hilily_home_client.h"
+#include "hilily_music_player.h"
+#include "mcp_server.h"
+#if CONFIG_HILILY_BATTERY_MONITOR
+#include "hilily_battery.h"
+#endif
+#if CONFIG_HILILY_VBUS_SENSE
+#include <driver/gpio.h>
+#endif
 
 #include <driver/spi_common.h>
 #include <esp_lcd_panel_io.h>
@@ -18,7 +28,7 @@ class Esp32S3ZeroTftBoard : public WifiBoard {
 private:
     Button boot_button_;
     Button wake_button_;
-    Display* display_ = nullptr;
+    HiLilyDisplay* display_ = nullptr;
 
     void InitializeSpi() {
         spi_bus_config_t bus_config = {};
@@ -58,7 +68,7 @@ private:
         ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY));
         ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y));
 
-        display_ = new SpiLcdDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+        display_ = new HiLilyDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
                                      DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y,
                                      DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
         ESP_LOGI(TAG, "ST7789 240x240 initialized (SPI2)");
@@ -90,6 +100,38 @@ public:
         InitializeSpi();
         InitializeDisplay();
         InitializeButtons();
+        StartHiLilyHomeClient(display_, HILILY_WORKER_HOME_URL);
+        auto& music = HiLilyMusicPlayer::GetInstance();
+        music.Configure(display_, HILILY_WORKER_BASE_URL);
+        // Device-local MCP commands. A gateway may invoke them directly without an LLM.
+        auto& mcp = McpServer::GetInstance();
+        mcp.AddTool("self.music.play",
+            "Play music locally on Hi Lily. ESP32 calls Worker Master directly for MP3 and timed LRC.",
+            PropertyList({Property("song", kPropertyTypeString).SetMaxLength(100),
+                          Property("artist", kPropertyTypeString, std::string(""))}),
+            [](const PropertyList& p) -> ToolResult {
+                const auto& song=p["song"].value<std::string>();
+                const auto& artist=p["artist"].value<std::string>();
+                if (!HiLilyMusicPlayer::GetInstance().Play(song,artist))
+                    return std::unexpected("Cannot queue music playback");
+                return std::string("Music command queued on device");
+            });
+        mcp.AddTool("self.music.status", "Get the local Hi Lily online music playback state",
+            PropertyList(), [](const PropertyList&) -> ReturnValue {
+                return HiLilyMusicPlayer::GetInstance().StatusJson();
+            });
+        mcp.AddTool("self.music.pause", "Pause local Hi Lily music",
+            PropertyList(), [](const PropertyList&) -> ReturnValue {
+                return HiLilyMusicPlayer::GetInstance().Pause();
+            });
+        mcp.AddTool("self.music.resume", "Resume local Hi Lily music",
+            PropertyList(), [](const PropertyList&) -> ReturnValue {
+                return HiLilyMusicPlayer::GetInstance().Resume();
+            });
+        mcp.AddTool("self.music.stop", "Stop local Hi Lily music",
+            PropertyList(), [](const PropertyList&) -> ReturnValue {
+                return HiLilyMusicPlayer::GetInstance().Stop();
+            });
         GetBacklight()->RestoreBrightness();
     }
 
@@ -102,6 +144,30 @@ public:
             AUDIO_I2S_MIC_GPIO_SCK, AUDIO_I2S_MIC_GPIO_WS, AUDIO_I2S_MIC_GPIO_DIN,
             I2S_STD_SLOT_LEFT);
         return &audio_codec;
+    }
+
+    bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
+#if CONFIG_HILILY_BATTERY_MONITOR
+        static HiLilyBattery battery;
+        if (!battery.ReadLevel(level)) return false;
+#if CONFIG_HILILY_VBUS_SENSE
+        static bool vbus_initialized = []() {
+            gpio_config_t cfg = {};
+            cfg.pin_bit_mask = 1ULL << VBUS_SENSE_GPIO;
+            cfg.mode = GPIO_MODE_INPUT;
+            cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
+            return gpio_config(&cfg) == ESP_OK;
+        }();
+        charging = vbus_initialized && gpio_get_level(VBUS_SENSE_GPIO) == 1;
+#else
+        charging = false;  // Charging state unknown without a separate VBUS/CHRG sensor.
+#endif
+        discharging = !charging;
+        return true;
+#else
+        (void)level; (void)charging; (void)discharging;
+        return false;
+#endif
     }
 
     Display* GetDisplay() override {

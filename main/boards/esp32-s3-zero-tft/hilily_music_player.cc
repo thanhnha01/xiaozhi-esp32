@@ -545,7 +545,6 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
             resampler.Convert(reinterpret_cast<int16_t*>(pcm.data()),decoded_frames,
                               info.sample_rate,info.channel,playback);
             if (!playback.empty()) {
-                if (!AwaitPlay(generation))break;
                 // OutputData is synchronous: stop/pause is checked again
                 // immediately before submitting each decoded PCM block.
                 // Do not drop decoded audio when Pause or TTS interrupts an

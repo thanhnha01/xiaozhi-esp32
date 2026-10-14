@@ -18,6 +18,7 @@
 #include <freertos/task.h>
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -255,10 +256,12 @@ bool HiLilyMusicPlayer::HasVoicePriority() const {
 bool HiLilyMusicPlayer::PlayRadio(std::string station) {
     // Fixed validated MP3 presets only. Never accept arbitrary HTTP URLs
     // from a voice transcript or an LLM tool argument.
-    if (station == "groove" || station == "groovesalad" ||
-        station == "groove salad") return Play("radio:groove");
-    if (station == "classic" || station == "groove salad classic")
+    std::transform(station.begin(), station.end(), station.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (station.find("classic") != std::string::npos)
         return Play("radio:classic");
+    if (station.find("groove") != std::string::npos)
+        return Play("radio:groove");
     return false;
 }
 

@@ -16,6 +16,7 @@ public:
     static HiLilyMusicPlayer& GetInstance();
     void Configure(HiLilyDisplay* display, const char* worker_base);
     bool Play(std::string title, std::string artist = {});
+    bool PlayRadio(std::string station);
     bool Pause();
     bool Resume();
     bool Stop();

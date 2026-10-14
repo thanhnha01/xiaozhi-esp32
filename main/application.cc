@@ -634,6 +634,10 @@ void Application::InitializeProtocol() {
                     music.Play(song->valuestring,
                          cJSON_IsString(artist) && strlen(artist->valuestring)<=100 ? artist->valuestring : "");
                 }
+            } else if (strcmp(action->valuestring, "radio") == 0) {
+                auto station = cJSON_GetObjectItem(root, "station");
+                if (cJSON_IsString(station) && strlen(station->valuestring) <= 40)
+                    music.PlayRadio(station->valuestring);
             } else if (strcmp(action->valuestring, "pause") == 0) {
                 music.Pause();
             } else if (strcmp(action->valuestring, "resume") == 0) {

@@ -1,4 +1,5 @@
 #include "hilily_music_player.h"
+#include "hilily_stream_source.h"
 #include "hilily_display.h"
 #include "application.h"
 #include "board.h"
@@ -225,6 +226,16 @@ bool HiLilyMusicPlayer::HasVoicePriority() const {
     return tts_active_.load() || notification_active_.load();
 }
 
+bool HiLilyMusicPlayer::PlayRadio(std::string station) {
+    // Fixed validated MP3 presets only. Never accept arbitrary HTTP URLs
+    // from a voice transcript or an LLM tool argument.
+    if (station == "groove" || station == "groovesalad" ||
+        station == "groove salad") return Play("radio:groove");
+    if (station == "classic" || station == "groove salad classic")
+        return Play("radio:classic");
+    return false;
+}
+
 HiLilyMusicPlayer& HiLilyMusicPlayer::GetInstance() {
     static HiLilyMusicPlayer player;
     return player;
@@ -352,16 +363,26 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
     auto* codec = Board::GetInstance().GetAudioCodec();
     if (!codec || !display_) return false;
     Track track;
+    const bool live_radio = title.rfind("radio:", 0) == 0;
     std::string base;
     {
         std::lock_guard<std::mutex> guard(mutex_);
         base = worker_base_;
     }
-    if (!ResolveTrack(base, title, artist, track) || Cancelled(generation)) {
+    if (live_radio) {
+        if (title == "radio:groove") {
+            track.title = "SomaFM Groove Salad";
+            track.audio = "https://ice5.somafm.com/groovesalad-128-mp3";
+        } else if (title == "radio:classic") {
+            track.title = "SomaFM Groove Salad Classic";
+            track.audio = "https://ice5.somafm.com/gsclassic-128-mp3";
+        } else return false;
+        track.artist = "Internet Radio";
+    } else if (!ResolveTrack(base, title, artist, track) || Cancelled(generation)) {
         ESP_LOGW(TAG, "No playable Worker track");
         return false;
     }
-    const std::string lrc = ReadLyrics(base,track.lyric);
+    const std::string lrc = live_radio ? std::string{} : ReadLyrics(base,track.lyric);
     if (Cancelled(generation)) return false;
     // Starting a new song updates metadata but keeps the audio clock at 0.
     display_->SetMusicTrack(track.title, track.artist, track.duration_ms, lrc);
@@ -381,29 +402,18 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
         ESP_LOGE(TAG,"MP3 decoder open failed");
         return false;
     }
-    auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
-    if (!http) { esp_audio_simple_dec_close(decoder); return false; }
-    http->SetTimeout(12000);
-    http->SetHeader("Accept", "audio/mpeg, audio/mp3, application/octet-stream");
-    http->SetHeader("Accept-Encoding", "identity");
-    if (!http->Open("GET",base+track.audio)) {
-        ESP_LOGE(TAG,"Could not open Worker MP3 stream");
-        http->Close();
+    HiLilyStreamSource stream;
+    const std::string stream_url = live_radio ? track.audio : base + track.audio;
+    if (!stream.Start(stream_url, live_radio)) {
         esp_audio_simple_dec_close(decoder);
+        ESP_LOGW(TAG, "Could not start buffered HTTP stream");
         return false;
     }
-    const auto status = http->GetStatusCode();
-    if (!status || *status != 200) {
-        ESP_LOGE(TAG,"Music stream failed HTTP %d",status ? *status : -1);
-        http->Close(); esp_audio_simple_dec_close(decoder);
-        return false;
-    }
-    service.BeginExternalPlayback();
-    codec->EnableOutput(true);
+    bool owns_output = false;
     auto release = [&]() {
-        http->Close();
+        stream.Stop();
         esp_audio_simple_dec_close(decoder);
-        service.EndExternalPlayback();
+        if (owns_output) service.EndExternalPlayback();
     };
     std::array<uint8_t,kInputBlock> input = {};
     std::vector<uint8_t> pending;
@@ -412,7 +422,6 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
     Resampler resampler;
     std::vector<int16_t> playback;
     bool ended = false,success = false,decode_error=false;
-    unsigned consecutive_read_failures = 0;
     uint32_t frames_decoded = 0;
     bool pause_was_reported = false;
     while (!Cancelled(generation)) {
@@ -428,23 +437,37 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
             pause_was_reported = paused_now;
         }
         if (!AwaitPlay(generation)) break;
-        // When paused, don't read the TCP stream. Keep microphone wake detection alive.
-        if (!ended && pending.size() < kMaxEncoded-kInputBlock) {
-            auto count = http->Read(reinterpret_cast<char*>(input.data()),input.size());
-            if (!count) {
-                // A transient timeout must not tear down the decoder. The
-                // provider may recover without requiring a new MP3 session.
-                if (++consecutive_read_failures > 3) {
-                    ESP_LOGW(TAG,"MP3 stream interrupted after retries");
-                    break;
-                }
-                ESP_LOGW(TAG,"MP3 read timeout (%u/3)",consecutive_read_failures);
-                vTaskDelay(pdMS_TO_TICKS(250 * consecutive_read_failures));
-                continue;
+        // TTS and notifications have higher priority than music. Release the
+        // codec while retaining the MP3 buffer and lyric playback clock.
+        if (HasVoicePriority()) {
+            if (owns_output) {
+                service.EndExternalPlayback(false);
+                owns_output = false;
             }
-            consecutive_read_failures = 0;
-            if (*count == 0) ended = true;
-            else pending.insert(pending.end(),input.begin(),input.begin()+*count);
+            display_->SetMusicPosition(static_cast<uint32_t>(
+                static_cast<uint64_t>(resampler.elapsed_samples)*1000/kOutputHz), false);
+            while (HasVoicePriority() && !Cancelled(generation))
+                vTaskDelay(pdMS_TO_TICKS(35));
+            if (Cancelled(generation)) break;
+        }
+        // Wait until the queued voice frames are drained before reclaiming DAC.
+        while (!owns_output && !service.IsPlaybackIdle() && !Cancelled(generation))
+            vTaskDelay(pdMS_TO_TICKS(30));
+        if (Cancelled(generation)) break;
+        if (!owns_output) {
+            service.BeginExternalPlayback();
+            codec->EnableOutput(true);
+            owns_output = true;
+        }
+        // Fetch from a producer task rather than blocking playback on HTTPS.
+        if (!ended && pending.size() < kMaxEncoded-kInputBlock) {
+            const int count = stream.Read(input.data(), input.size());
+            if (count < 0) {
+                ESP_LOGW(TAG, "Buffered MP3 source failed");
+                break;
+            }
+            if (count == 0) ended = true;
+            else pending.insert(pending.end(),input.begin(),input.begin()+count);
         }
         if (pending.empty()) { if (ended) {success=frames_decoded>0; break;} continue; }
         esp_audio_simple_dec_raw_t raw={};
@@ -482,7 +505,8 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
                 if (!AwaitPlay(generation))break;
                 // OutputData is synchronous: stop/pause is checked again
                 // immediately before submitting each decoded PCM block.
-                if (!AwaitPlay(generation)) break;
+                if (!AwaitPlay(generation) || Cancelled(generation)) break;
+                if (HasVoicePriority()) continue;
                 codec->OutputData(playback);
                 resampler.elapsed_samples+=playback.size();
                 ++frames_decoded;

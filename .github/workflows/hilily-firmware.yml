@@ -41,7 +41,7 @@ jobs:
           set -euo pipefail
           source "$IDF_PATH/export.sh"
           idf.py --version
-          python3 scripts/build.py esp32-s3-zero-tft --name esp32-s3-zero-tft --language vi-VN
+          python3 scripts/build.py esp32-s3-zero-tft --name esp32-s3-zero-tft --language vi-VN --wake-word wn9_hilili_tts
           idf.py size
 
       - name: Check binary size and package result
@@ -64,7 +64,7 @@ jobs:
           app = root / (meta["project_name"] + ".bin")
           if not app.is_file() or app.stat().st_size == 0:
               raise SystemExit(f"FAILED: app image {app} not found")
-          with pathlib.Path("partitions/v2/4m.csv").open(newline="") as source:
+          with pathlib.Path("partitions/v2/4m_hilily.csv").open(newline="") as source:
               rows = list(csv.reader(line for line in source if line.strip() and not line.lstrip().startswith("#")))
           app_limit = next(int(row[4].strip(), 0) for row in rows if row[1].strip() == "app" and row[2].strip() == "factory")
           flash_limit = 4 * 1024 * 1024

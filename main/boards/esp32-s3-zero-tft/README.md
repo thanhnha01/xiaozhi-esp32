@@ -54,16 +54,16 @@ soldering and change `config.h` in this board only if necessary.
 Use **ESP-IDF v6.1** (v6.0.1 minimum in this repository):
 
 ```sh
-python scripts/build.py esp32-s3-zero-tft --name esp32-s3-zero-tft --language vi-VN
+python scripts/build.py esp32-s3-zero-tft --name esp32-s3-zero-tft --language vi-VN --wake-word wn9_hilili_tts
 idf.py size
 ```
 
-The preset selects `partitions/v2/4m.csv`, **Quad PSRAM** instead of the
+The preset selects `partitions/v2/4m_hilily.csv`, **Quad PSRAM** instead of the
 ESP32-S3 default Octal mode, and the built-in **WakeNet9 Hi Lily** model (`wn9_hilili_tts`),
 with speech-processing/AEC and wake-word audio upload off for the
 memory-constrained first build. The LVGL pool is reduced to 256KB and its
 image cache to 64KB on this board, to leave PSRAM for WakeNet9/AFE.
-**The compiled model and firmware are NOT yet confirmed to fit**. The 4MB partition layout is **factory-only**:
+**The compiled model and firmware are NOT yet confirmed to fit**. The Hi Lily 4MB partition layout is **factory-only**:
 it has **no dual OTA app slots**, so firmware OTA A/B is not available.
 Verify that the compiled app and assets fit in their partitions. A successful
 compile does not imply working mic, playback, LCD, Wi-Fi or wake word.
@@ -85,11 +85,10 @@ for this external mic/DAC pair. Do not assume full-duplex AEC will work.
 
 ## Hi Lily wake word + pushbuttons
 
-The default variant explicitly selects `CONFIG_USE_AFE_WAKE_WORD=y`,
-`CONFIG_SR_WN_WN9_HILILI_TTS=y`, and disables the old Chinese WakeNet
-model. Hi Lily is an actual WakeNet9 model (not merely a changed label).
+The board enables AFE wake-word support, while the **build command** selects
+`wn9_hilili_tts` using `--wake-word` (not a model selector in board config.json). Hi Lily is an actual WakeNet9 model (not merely a changed label).
 It requires the ESP-SR 2.4.7 package to provide the symbol and model.
-The runtime fetches speech assets from the 4MB layout's 1MB assets partition.
+The runtime fetches speech assets from the Hi Lily-specific 4MB layout's 0x130000-byte (1.1875 MiB) assets partition.
 If the assets image or firmware exceeds that partition, the **4MB physical
 flash is a blocker**, not an option to declare a bigger flash in sdkconfig.
 No successful ESP-IDF build or physical wake test is claimed here.

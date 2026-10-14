@@ -42,7 +42,10 @@ jobs:
           source "$IDF_PATH/export.sh"
           idf.py --version
           python3 scripts/build.py esp32-s3-zero-tft --name esp32-s3-zero-tft --language vi-VN --wake-word wn9_hilili_tts
-          idf.py size
+          # build.py configures the CMake project with python3. Using bare
+          # idf.py here selects the python alias and fails ESP-IDF's strict
+          # interpreter-path check even though the firmware already linked.
+          python3 "$IDF_PATH/tools/idf.py" size
 
       - name: Check binary size and package result
         shell: bash
@@ -70,8 +73,22 @@ jobs:
           flash_limit = 4 * 1024 * 1024
           if app.stat().st_size > app_limit:
               raise SystemExit(f"FAILED: app size {app.stat().st_size} > factory limit {app_limit}")
-          if merged.stat().st_size > flash_limit:
-              raise SystemExit(f"FAILED: merged image size {merged.stat().st_size} > flash limit {flash_limit}")
+          assets = root / "generated_assets.bin"
+          if not assets.is_file() or assets.stat().st_size == 0:
+              raise SystemExit("FAILED: generated_assets.bin missing or empty")
+          assets_row = next(row for row in rows if row[0].strip() == "assets")
+          assets_offset = int(assets_row[3].strip(), 0)
+          assets_limit = int(assets_row[4].strip(), 0)
+          if assets.stat().st_size > assets_limit:
+              raise SystemExit(f"FAILED: assets size {assets.stat().st_size} > assets partition {assets_limit}")
+          if merged.stat().st_size > flash_limit or assets_offset + assets_limit > flash_limit:
+              raise SystemExit(f"FAILED: merged image or asset partition exceeds physical 4MB flash")
+          # This release is a FULL flash image; confirm it embeds the assets at
+          # the configured offset rather than accidentally publishing app-only.
+          with merged.open("rb") as merged_file, assets.open("rb") as asset_file:
+              merged_file.seek(assets_offset)
+              if merged_file.read(assets.stat().st_size) != asset_file.read():
+                  raise SystemExit("FAILED: merged image does not contain expected assets")
           dist = pathlib.Path("dist")
           dist.mkdir(exist_ok=True)
           filename = "HiLily-ESP32-S3-Zero-N4R2-4MB-full.bin"
@@ -81,6 +98,7 @@ jobs:
           lines = [
               f"Source SHA: {os.environ['GITHUB_SHA']}",
               f"Factory app image: {app.stat().st_size} / {app_limit} bytes",
+              f"Assets image: {assets.stat().st_size} / {assets_limit} bytes",
               f"Merged image: {merged.stat().st_size} / {flash_limit} bytes",
               f"SHA256: {sha}",
               "Factory-only 4MB flash; OTA A/B not available; hardware not validated.",

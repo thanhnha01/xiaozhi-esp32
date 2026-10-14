@@ -1,0 +1,137 @@
+name: Build and Release Hi Lily Firmware
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/hilily-firmware.yml'
+      - 'main/boards/esp32-s3-zero-tft/**'
+      - 'main/application.*'
+      - 'main/audio/**'
+      - 'main/CMakeLists.txt'
+      - 'main/Kconfig.projbuild'
+      - 'main/display/**'
+      - 'partitions/**'
+      - 'sdkconfig.defaults*'
+      - 'scripts/build.py'
+      - 'dependencies.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hilily-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Compile Hi Lily ESP32-S3 N4R2
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v6.1
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Vietnamese Hi Lily firmware only
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$IDF_PATH/export.sh"
+          idf.py --version
+          python3 scripts/build.py esp32-s3-zero-tft --name esp32-s3-zero-tft --language vi-VN
+          idf.py size
+
+      - name: Check binary size and package result
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import shutil
+
+          root = pathlib.Path("build")
+          merged = root / "merged-binary.bin"
+          if not merged.is_file() or merged.stat().st_size == 0:
+              raise SystemExit("FAILED: merged-binary.bin missing or empty")
+          meta = json.loads((root / "project_description.json").read_text())
+          app = root / (meta["project_name"] + ".bin")
+          if not app.is_file() or app.stat().st_size == 0:
+              raise SystemExit(f"FAILED: app image {app} not found")
+          with pathlib.Path("partitions/v2/4m.csv").open(newline="") as source:
+              rows = list(csv.reader(line for line in source if line.strip() and not line.lstrip().startswith("#")))
+          app_limit = next(int(row[4].strip(), 0) for row in rows if row[1].strip() == "app" and row[2].strip() == "factory")
+          flash_limit = 4 * 1024 * 1024
+          if app.stat().st_size > app_limit:
+              raise SystemExit(f"FAILED: app size {app.stat().st_size} > factory limit {app_limit}")
+          if merged.stat().st_size > flash_limit:
+              raise SystemExit(f"FAILED: merged image size {merged.stat().st_size} > flash limit {flash_limit}")
+          dist = pathlib.Path("dist")
+          dist.mkdir(exist_ok=True)
+          filename = "HiLily-ESP32-S3-Zero-N4R2-4MB-full.bin"
+          shutil.copyfile(merged, dist / filename)
+          sha = hashlib.sha256((dist / filename).read_bytes()).hexdigest()
+          (dist / "SHA256SUMS.txt").write_text(f"{sha}  {filename}\n")
+          lines = [
+              f"Source SHA: {os.environ['GITHUB_SHA']}",
+              f"Factory app image: {app.stat().st_size} / {app_limit} bytes",
+              f"Merged image: {merged.stat().st_size} / {flash_limit} bytes",
+              f"SHA256: {sha}",
+              "Factory-only 4MB flash; OTA A/B not available; hardware not validated.",
+          ]
+          (dist / "BUILD_INFO.txt").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hilily-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish CI prerelease after successful compilation
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified build
+        uses: actions/download-artifact@v4
+        with:
+          name: hilily-${{ github.sha }}
+          path: dist
+
+      - name: Create GitHub prerelease with full-flash image
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="hilily-ci-${GITHUB_SHA:0:12}"
+          cat > release-notes.txt <<EOF
+          Hi Lily - ESP32-S3 Zero N4R2 (4 MB flash / 2 MB PSRAM).
+
+          Source commit: $GITHUB_SHA
+
+          Built with ESP-IDF v6.1. Firmware compiled successfully and its
+          factory partition size checked before publishing.
+
+          This is a CI prerelease, NOT a hardware-validated production firmware.
+          Use the merged 4MB image for initial USB flashing, NOT OTA update.
+          The board has no dual OTA app partitions.
+          EOF
+          gh release create "$tag" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Hi Lily CI ${GITHUB_SHA:0:12}" \
+            --prerelease --notes-file release-notes.txt

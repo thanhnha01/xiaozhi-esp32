@@ -30,8 +30,9 @@
 // The LCD DC pin is permanently moved away from ADC.
 #define DISPLAY_DC_PIN           GPIO_NUM_15
 #define BATTERY_ADC_GPIO        GPIO_NUM_10
-// Optional: 5V VBUS -> 100k -> GPIO16 -> 150k -> GND.
-// GPIO16 HIGH means external power detected, NOT proven cell charging.
+// USB 5V INPUT (not boosted 5V output) -> 100k -> GPIO16 -> 150k -> GND.
+// 5V input is divided to 3.0V HIGH; GPIO16 internal pulls MUST be disabled.
+// HIGH means external USB power present, not proven cell charging current.
 #define VBUS_SENSE_GPIO         GPIO_NUM_16
 #define HILILY_WORKER_BASE_URL "https://xiaozhi-master.nguyennha-020201.workers.dev"
 #define HILILY_WORKER_HOME_URL HILILY_WORKER_BASE_URL "/api/display/home"

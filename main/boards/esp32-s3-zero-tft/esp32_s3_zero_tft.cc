@@ -162,9 +162,15 @@ public:
             gpio_config_t cfg = {};
             cfg.pin_bit_mask = 1ULL << VBUS_SENSE_GPIO;
             cfg.mode = GPIO_MODE_INPUT;
-            cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
+            cfg.intr_type = GPIO_INTR_DISABLE;
+            // External 100k/150k divider already holds LOW when USB VBUS is absent.
+            // Internal pull resistors would distort the divided 5V HIGH level.
+            cfg.pull_up_en = GPIO_PULLUP_DISABLE;
+            cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
             return gpio_config(&cfg) == ESP_OK;
         }();
+        // The VBUS input means external 5V is present, not that the cell
+        // is necessarily accepting charge (e.g. its charger may be full).
         charging = vbus_initialized && gpio_get_level(VBUS_SENSE_GPIO) == 1;
 #else
         charging = false;  // Charging state unknown without a separate VBUS/CHRG sensor.

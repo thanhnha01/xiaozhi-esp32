@@ -17,15 +17,17 @@ board has **not yet been hardware-validated**. The LCD controller is assumed to 
 | PCM5102A | DIN | 7 |
 | TFT ST7789 | SCL / SCK | 12 |
 | TFT ST7789 | SDA / MOSI | 11 |
-| TFT ST7789 | DC / A0 | 10 |
+| TFT ST7789 | DC / A0 | 15 |
 | TFT ST7789 | CS | 9 |
 | TFT ST7789 | RES / RST | 8 |
 | TFT ST7789 | BL / LED | 13 (PWM) |
 | Onboard WS2812 RGB LED | Data | 21 (already connected) |
 | Onboard BOOT button | Input | 0 (already connected) |
 | External WAKE button | NO pushbutton | GPIO14 to GND (internal pull-up) |
+| 18650 voltage divider | 100k (BAT+ to node), 100k (node to GND), 100nF (node to GND) | GPIO10 (ADC1_CH9) |
+| USB input (VBUS) sense | 100k (USB 5V input to node), 150k (node to GND) | GPIO16 (digital input, no internal pulls) |
 
-All modules must share GND. INMP441 uses 3.3V power; respect each module's
+All modules must share GND. Sense USB **5V INPUT**, not the boost module's persistent **5V OUTPUT**, so HIGH means external charging power is plugged in. The 100k/150k divider reduces 5V to 3.0V at GPIO16 (0V input = LOW). This does **not** prove the battery is actively charging or distinguish a full cell; the charging bolt means VBUS present. Keep ESP32 GPIO below 3.3V and verify wiring before power-up. Never connect raw 5V or raw battery voltage directly to GPIO, and avoid driving a GPIO while the ESP32 is unpowered. INMP441 uses 3.3V power; respect each module's
 power/logic specifications. PCM5102A is **line-level**, not a speaker power
 amplifier: use its **L** output into an AUX input or an amplifier for this
 initial mono-left firmware. The module's SCK/MCLK, XSMT and FMT wiring/jumpers
@@ -63,7 +65,7 @@ ESP32-S3 default Octal mode, and the built-in **WakeNet9 Hi Lily** model (`wn9_h
 with speech-processing/AEC and wake-word audio upload off for the
 memory-constrained first build. The LVGL pool is reduced to 256KB and its
 image cache to 64KB on this board, to leave PSRAM for WakeNet9/AFE.
-**The compiled model and firmware are NOT yet confirmed to fit**. The Hi Lily 4MB partition layout is **factory-only**:
+**The factory firmware and WakeNet model have passed ESP-IDF CI compilation**, but the physical board and charger module have NOT been tested. The Hi Lily 4MB partition layout is **factory-only**:
 it has **no dual OTA app slots**, so firmware OTA A/B is not available.
 Verify that the compiled app and assets fit in their partitions. A successful
 compile does not imply working mic, playback, LCD, Wi-Fi or wake word.
@@ -91,7 +93,7 @@ It requires the ESP-SR 2.4.7 package to provide the symbol and model.
 The runtime fetches speech assets from the Hi Lily-specific 4MB layout's 0x130000-byte (1.1875 MiB) assets partition.
 If the assets image or firmware exceeds that partition, the **4MB physical
 flash is a blocker**, not an option to declare a bigger flash in sdkconfig.
-No successful ESP-IDF build or physical wake test is claimed here.
+ESP-IDF CI compilation has passed; no physical wake test is claimed.
 
 To switch off wake detection for comparison:
 ```sh
@@ -121,6 +123,13 @@ Vietnamese lunar calendar, mascot emotion assets, music playback lyric/timing,
 and battery charging/low-level rules. These features are not yet all wired
 end-to-end, especially battery module and synchronized music player.
 
-Enable battery status (only after wiring the specified 1-cell voltage divider
-and charger CHRG# pin) with `CONFIG_HILILY_BATTERY_MONITOR=y` in a build option.
-The LCD DC pin changes from GPIO10 to GPIO15 under this option.
+The board preset has `CONFIG_HILILY_BATTERY_MONITOR=y` and
+`CONFIG_HILILY_VBUS_SENSE=y`. GPIO10 reads the 18650 cell through a 100k+100k
+resistor divider and 100nF filter. GPIO16 reports HIGH when the module's
+**USB 5V INPUT** is present through an independent 100k+150k divider;
+LOW otherwise. Both internal GPIO16 pulls are disabled to avoid loading
+that divider. Battery display uses 3.0V = 0% and 4.2V = 100% endpoints;
+this is a rough voltage-based estimate, not a calibrated fuel gauge.
+A USB-input HIGH is labeled as charging in the UI per this build's policy,
+but it does not verify charging current or charger DONE/STAT status.
+The LCD DC pin is permanently GPIO15 to keep GPIO10 free for ADC.

@@ -62,9 +62,11 @@ size_t HiLilyStreamSource::Write(const uint8_t* src, size_t n) {
     return count;
 }
 
-int HiLilyStreamSource::Read(uint8_t* dst, size_t size) {
+int HiLilyStreamSource::Read(uint8_t* dst, size_t size,
+                              const std::function<bool()>& interrupt) {
     const TickType_t start = xTaskGetTickCount();
     while (!stop_.load()) {
+        if (interrupt && interrupt()) return -2;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (used_) {

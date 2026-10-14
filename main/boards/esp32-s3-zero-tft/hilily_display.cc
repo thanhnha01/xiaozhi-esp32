@@ -177,7 +177,7 @@ void HiLilyDisplay::SetupUI() {
         auto* bar = lv_bar_create(music_panel_);
         music_spectrum_bars_[i] = bar;
         lv_obj_set_size(bar, 9, 21);
-        lv_obj_align(bar, LV_ALIGN_BOTTOM_LEFT, static_cast<int>(i * 16 + 5), -35);
+        lv_obj_align(bar, LV_ALIGN_BOTTOM_LEFT, static_cast<int>(i * 16 + 5), -30);
         lv_obj_set_style_bg_color(bar, lv_color_hex(0x24364A), 0);
         lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(bar, lv_color_hex(0x38BDF8), LV_PART_INDICATOR);

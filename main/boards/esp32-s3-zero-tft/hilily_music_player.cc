@@ -499,7 +499,12 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
         }
         // Fetch from a producer task rather than blocking playback on HTTPS.
         if (!ended && pending.size() < kMaxEncoded-kInputBlock) {
-            const int count = stream.Read(input.data(), input.size());
+            const int count = stream.Read(input.data(), input.size(), [this, generation]() {
+                if (HasVoicePriority() || Cancelled(generation)) return true;
+                std::lock_guard<std::mutex> guard(mutex_);
+                return paused_;
+            });
+            if (count == -2) continue;
             if (count < 0) {
                 ESP_LOGW(TAG, "Buffered MP3 source failed");
                 break;

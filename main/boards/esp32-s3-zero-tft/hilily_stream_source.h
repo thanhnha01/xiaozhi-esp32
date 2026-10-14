@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <freertos/FreeRTOS.h>
@@ -15,7 +16,8 @@ public:
     ~HiLilyStreamSource();
     bool Start(std::string url, bool live);
     // >0 bytes, 0 normal EOF, -1 error/cancel. Timeout is bounded.
-    int Read(uint8_t* dst, size_t capacity);
+    // Returns -2 when interrupted by voice priority/pause, without consuming bytes.
+    int Read(uint8_t* dst, size_t capacity, const std::function<bool()>& interrupt);
     void Stop();
     size_t Buffered() const;
     bool IsLive() const { return live_; }

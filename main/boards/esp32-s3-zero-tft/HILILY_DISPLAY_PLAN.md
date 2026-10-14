@@ -194,3 +194,35 @@ music STT intents before the LLM stage and forwards a direct music event.
   station API/provider verification, spectrum FFT, and arbitration against
   concurrent TTS output. These are not claimed as completed.
 - Compile, size, and device testing are required before shipping.
+
+## v2 audio architecture and constraints (2026-10-14)
+
+The `feat/hilily-online-audio-v2` branch contains a **48 KiB bounded PSRAM
+ring** with an independent HTTPS download task. MP3 decoder consumes from the
+ring; file-stream reconnect uses HTTP Range and requires status **206** for a
+nonzero resume offset. A server ignoring Range is rejected, rather than
+silently replaying the song and invalidating lyric timestamps. Up to three
+consecutive reconnect failures are tolerated. A live radio reconnect starts
+at live-edge (no Range); only MP3 stations are supported.
+
+DeepSeek is retained and can call `self.music.*` and `self.radio.play` on
+the ESP32. Voice TTS and notifications have higher DAC priority: local music
+releases the exclusive codec and resumes after voice queues drain; pausing
+likewise releases DAC. Reconnect only preserves approximate decoded-file
+position and does **not** guarantee gapless audio.
+
+The device has a 12-band lightweight Goertzel visualizer on TFT, updated no
+faster than ~9 Hz from decoded PCM. This is deliberately cheaper than a
+full-size FFT/canvas task on ESP32-S3 N4R2.
+
+Current radio presets are SomaFM Groove Salad and Groove Salad Classic:
+https://somafm.com/groovesalad/directstreamlinks.html
+https://somafm.com/gsclassic/directstreamlinks.html
+Direct endpoints can change. VOV stations in TienHuyIoT are not copied because
+its source assumes AAC streaming, whereas the Hi Lily firmware currently has
+only verified MP3 decoder configuration.
+
+**Verification required:** ESP-IDF 6.1 compile, memory/partition footprint,
+TLS handshake/proxy responses, MP3 initial buffering, TTS interruption,
+HTTP 206 resume, ring producer cancellation, and physical TFT layout. Do not
+claim a working production build or merge without those results.

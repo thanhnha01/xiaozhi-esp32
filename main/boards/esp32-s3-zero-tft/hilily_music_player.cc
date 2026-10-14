@@ -543,10 +543,15 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
                 if (!AwaitPlay(generation))break;
                 // OutputData is synchronous: stop/pause is checked again
                 // immediately before submitting each decoded PCM block.
-                if (!AwaitPlay(generation) || Cancelled(generation)) break;
-                // A voice request arriving inside a decoded frame still needs
-                // to yield before output, without silently dropping PCM.
-                while (HasVoicePriority() && !Cancelled(generation)) {
+                // Do not drop decoded audio when Pause or TTS interrupts an
+                // output frame; release DAC while the frame stays in memory.
+                while (!Cancelled(generation)) {
+                    bool paused;
+                    {
+                        std::lock_guard<std::mutex> guard(mutex_);
+                        paused = paused_;
+                    }
+                    if (!paused && !HasVoicePriority()) break;
                     if (owns_output) {
                         service.EndExternalPlayback(false);
                         owns_output = false;

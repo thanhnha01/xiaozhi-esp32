@@ -571,6 +571,9 @@ void Application::InitializeProtocol() {
     });
 
     protocol_->OnAudioChannelClosed([this, &board]() {
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+        HiLilyMusicPlayer::GetInstance().SetTtsActive(false);
+#endif
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();

@@ -1,6 +1,9 @@
 #ifndef HILILY_BATTERY_H
 #define HILILY_BATTERY_H
 
+// Every translation unit must see the same board feature switches.
+#include "sdkconfig.h"
+
 #if CONFIG_HILILY_BATTERY_MONITOR
 #include <esp_adc/adc_cali.h>
 #include <esp_adc/adc_oneshot.h>

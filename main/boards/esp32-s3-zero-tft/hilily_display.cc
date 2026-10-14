@@ -94,10 +94,15 @@ void HiLilyDisplay::SetMusicPosition(uint32_t position_ms,bool playing) {
     ++music_revision_;
 }
 void HiLilyDisplay::SetMusicSpectrum(const std::array<uint8_t, 12>& levels) {
-    std::lock_guard<std::mutex> lock(music_mutex_);
-    if (!music_active_) return;
-    music_spectrum_ = levels;
-    ++music_revision_;
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (!music_active_) return;
+        music_spectrum_ = levels;
+        ++music_revision_;
+    }
+    // Main clock ticks only once a second. Explicitly schedule a screen
+    // refresh for ~9Hz spectrum updates, outside the music mutex.
+    Application::GetInstance().Schedule([this]() { UpdateStatusBar(); });
 }
 
 void HiLilyDisplay::ClearMusic() {

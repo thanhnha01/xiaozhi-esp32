@@ -1,19 +1,47 @@
 #include "hilily_display.h"
 #include "application.h"
 #include "device_state.h"
+#include "assets/lang_config.h"
 
 #include <cstdio>
+#include <cstring>
 #include <algorithm>
 #include <cstdlib>
 #include <limits>
 #include <utility>
 
 namespace {
+// On 240x240 the top icons/status occupy ~0..30px and one-line subtitles
+// begin near y=208px. All board-local panels fit between y=34 and y=198.
+constexpr int kPanelHeight = 164;
+constexpr int kPanelOffsetY = -4;
+
 void SetupText(lv_obj_t* label, int width) {
     lv_obj_set_width(label, width);
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(label, lv_color_hex(0xF5FAFF), 0);
+}
+
+void SetVisible(lv_obj_t* object, bool visible) {
+    if (!object) return;
+    const bool hidden = lv_obj_has_flag(object, LV_OBJ_FLAG_HIDDEN);
+    if (visible && hidden) lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+    if (!visible && !hidden) lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+}
+
+std::string FormatWifiHint(const char* content) {
+    if (!content || !*content) return "Đang tạo điểm phát Wi-Fi...";
+    std::string text(content);
+    const std::string ssid_label = Lang::Strings::CONNECT_TO_HOTSPOT;
+    const std::string url_label = Lang::Strings::ACCESS_VIA_BROWSER;
+    size_t boundary = text.find(url_label);
+    // The Wi-Fi manager provides "Điểm phát sóng: <SSID> URL cấu hình: <URL>".
+    if (text.rfind(ssid_label, 0) == 0 && boundary != std::string::npos) {
+        return "SSID: " + text.substr(ssid_label.size(), boundary - ssid_label.size()) +
+               "\nTruy cập:\n" + text.substr(boundary + url_label.size());
+    }
+    return text;
 }
 }
 
@@ -121,13 +149,36 @@ void HiLilyDisplay::SetHomeData(std::string location, std::string condition,
     ++revision_;
 }
 
+void HiLilyDisplay::SetChatMessage(const char* role, const char* content) {
+    // Native Xiaozhi subtitles remain unchanged outside Wi-Fi provisioning.
+    SpiLcdDisplay::SetChatMessage(role, content);
+    if (Application::GetInstance().GetDeviceState() != kDeviceStateWifiConfiguring ||
+        !role || std::strcmp(role, "system") != 0 || !content || !*content) return;
+    const auto hint = FormatWifiHint(content);
+    if (!Lock(100)) return;
+    if (wifi_hint_label_) lv_label_set_text(wifi_hint_label_, hint.c_str());
+    SetVisible(bottom_bar_, false);
+    Unlock();
+}
+
 void HiLilyDisplay::SetupUI() {
     SpiLcdDisplay::SetupUI();
     if (!Lock(200)) return;
 
+    // Center text in the space between the left Wi-Fi icon and right battery %.
+    // The 180px stock status label can collide with the battery at 240px.
+    if (status_label_) {
+        lv_obj_set_width(status_label_, 128);
+        lv_obj_align(status_label_, LV_ALIGN_CENTER, -12, 0);
+    }
+    if (notification_label_) {
+        lv_obj_set_width(notification_label_, 128);
+        lv_obj_align(notification_label_, LV_ALIGN_CENTER, -12, 0);
+    }
+
     panel_ = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(panel_, 224, 154);
-    lv_obj_align(panel_, LV_ALIGN_CENTER, 0, 12);
+    lv_obj_set_size(panel_, 224, kPanelHeight);
+    lv_obj_align(panel_, LV_ALIGN_CENTER, 0, kPanelOffsetY);
     lv_obj_set_style_bg_color(panel_, lv_color_hex(0x11243A), 0);
     lv_obj_set_style_bg_opa(panel_, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(panel_, 0, 0);
@@ -153,11 +204,12 @@ void HiLilyDisplay::SetupUI() {
     lv_obj_add_flag(panel_, LV_OBJ_FLAG_HIDDEN);
 
     music_panel_ = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(music_panel_,224,158);
-    lv_obj_align(music_panel_,LV_ALIGN_CENTER,0,12);
+    lv_obj_set_size(music_panel_, 224, kPanelHeight);
+    lv_obj_align(music_panel_, LV_ALIGN_CENTER, 0, kPanelOffsetY);
     lv_obj_set_style_bg_color(music_panel_,lv_color_hex(0x101927),0);
     lv_obj_set_style_bg_opa(music_panel_,LV_OPA_COVER,0);
     lv_obj_set_style_border_width(music_panel_,0,0);
+    lv_obj_set_style_radius(music_panel_, 8, 0);
     lv_obj_set_style_pad_all(music_panel_,8,0);
     lv_obj_clear_flag(music_panel_,LV_OBJ_FLAG_SCROLLABLE);
     music_title_label_=lv_label_create(music_panel_);
@@ -169,13 +221,18 @@ void HiLilyDisplay::SetupUI() {
         SetupText(label,204);
     lv_obj_align(music_title_label_,LV_ALIGN_TOP_MID,0,0);
     lv_obj_align(music_artist_label_,LV_ALIGN_TOP_MID,0,24);
-    lv_obj_set_size(music_lyric_label_,204,52);
-    lv_label_set_long_mode(music_lyric_label_,LV_LABEL_LONG_WRAP);
-    lv_obj_align(music_lyric_label_,LV_ALIGN_CENTER,0,2);
+    // y≈86..134: 5px clear of the spectrum at y≈139..160.
+    // Ellipsize long lyrics rather than allowing them to overlap spectrum.
+    lv_obj_set_size(music_lyric_label_, 204, 48);
+    lv_label_set_long_mode(music_lyric_label_, LV_LABEL_LONG_DOT);
+    lv_obj_align(music_lyric_label_, LV_ALIGN_CENTER, 0, -6);
     lv_obj_set_style_text_color(music_lyric_label_,lv_color_hex(0x7DD3FC),0);
     lv_obj_align(music_time_label_,LV_ALIGN_BOTTOM_MID,0,0);
     lv_obj_set_size(music_progress_,194,5);
     lv_obj_align(music_progress_,LV_ALIGN_BOTTOM_MID,0,-22);
+    lv_obj_set_style_bg_color(music_progress_, lv_color_hex(0x24364A), 0);
+    lv_obj_set_style_bg_color(music_progress_, lv_color_hex(0x38BDF8), LV_PART_INDICATOR);
+    lv_obj_set_style_border_width(music_progress_, 0, 0);
     lv_bar_set_range(music_progress_,0,1000);
     // 12 compact bands, display-only objects. DSP runs on audio task (~10Hz).
     for (size_t i = 0; i < music_spectrum_bars_.size(); ++i) {
@@ -190,6 +247,42 @@ void HiLilyDisplay::SetupUI() {
         lv_bar_set_value(bar, 0, LV_ANIM_OFF);
     }
     lv_obj_add_flag(music_panel_,LV_OBJ_FLAG_HIDDEN);
+
+    // The stock Wi-Fi portal hint contains both SSID and URL in one long
+    // subtitle. Provide a board-local readable panel for provisioning.
+    wifi_panel_ = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(wifi_panel_, 224, kPanelHeight);
+    lv_obj_align(wifi_panel_, LV_ALIGN_CENTER, 0, kPanelOffsetY);
+    lv_obj_set_style_bg_color(wifi_panel_, lv_color_hex(0x11243A), 0);
+    lv_obj_set_style_bg_opa(wifi_panel_, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(wifi_panel_, 0, 0);
+    lv_obj_set_style_radius(wifi_panel_, 14, 0);
+    lv_obj_set_style_pad_all(wifi_panel_, 8, 0);
+    lv_obj_clear_flag(wifi_panel_, LV_OBJ_FLAG_SCROLLABLE);
+    auto* wifi_title = lv_label_create(wifi_panel_);
+    SetupText(wifi_title, 204);
+    lv_label_set_text(wifi_title, "Thiết lập Wi-Fi");
+    lv_obj_align(wifi_title, LV_ALIGN_TOP_MID, 0, 6);
+    wifi_hint_label_ = lv_label_create(wifi_panel_);
+    SetupText(wifi_hint_label_, 204);
+    lv_obj_set_height(wifi_hint_label_, 98);
+    lv_label_set_long_mode(wifi_hint_label_, LV_LABEL_LONG_DOT);
+    lv_label_set_text(wifi_hint_label_, "Đang tạo điểm phát Wi-Fi...");
+    lv_obj_align(wifi_hint_label_, LV_ALIGN_CENTER, 0, 15);
+    lv_obj_add_flag(wifi_panel_, LV_OBJ_FLAG_HIDDEN);
+
+    // Critical battery alerts must be above the music/home/Wi-Fi overlays.
+    // Two-line wrapping fits Vietnamese warning text on this small display.
+    if (low_battery_popup_ && low_battery_label_) {
+        lv_obj_set_size(low_battery_popup_, 220, 44);
+        lv_obj_set_style_pad_all(low_battery_popup_, 4, 0);
+        lv_obj_align(low_battery_popup_, LV_ALIGN_BOTTOM_MID, 0, -6);
+        lv_obj_set_width(low_battery_label_, 210);
+        lv_label_set_long_mode(low_battery_label_, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_align(low_battery_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_center(low_battery_label_);
+        lv_obj_move_foreground(low_battery_popup_);
+    }
     Unlock();
 }
 
@@ -197,7 +290,9 @@ void HiLilyDisplay::UpdateStatusBar(bool update_all) {
     SpiLcdDisplay::UpdateStatusBar(update_all);
     if (!panel_) return;
 
-    const bool idle = Application::GetInstance().GetDeviceState() == kDeviceStateIdle;
+    const DeviceState state = Application::GetInstance().GetDeviceState();
+    const bool idle = state == kDeviceStateIdle;
+    const bool wifi_setup = state == kDeviceStateWifiConfiguring;
     std::string loc, condition, lunar;
     double temp = 0;
     bool data_ready;
@@ -235,41 +330,39 @@ void HiLilyDisplay::UpdateStatusBar(bool update_all) {
         }
     }
     if (!Lock(50)) return;
-    if (music_active != was_music_) {
-        if(music_active) {
-            lv_obj_remove_flag(music_panel_,LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(panel_,LV_OBJ_FLAG_HIDDEN);
-            if(emoji_box_)lv_obj_add_flag(emoji_box_,LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(music_panel_,LV_OBJ_FLAG_HIDDEN);
-            if (idle) {
-                lv_obj_remove_flag(panel_, LV_OBJ_FLAG_HIDDEN);
-                if (emoji_box_) lv_obj_add_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
-            } else if (emoji_box_) lv_obj_remove_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
-        }
-        was_music_=music_active;
-    }
+    // Exactly one central surface at a time. Stock emoji is used for
+    // starting/connecting/listening/speaking; no extra GIF assets.
+    const bool show_music = music_active && !wifi_setup;
+    const bool show_home = idle && !show_music && !wifi_setup;
+    SetVisible(music_panel_, show_music);
+    SetVisible(panel_, show_home);
+    SetVisible(wifi_panel_, wifi_setup);
+    SetVisible(emoji_box_, !show_music && !show_home && !wifi_setup);
+    if (wifi_setup) SetVisible(bottom_bar_, false);
     if(music_active && music_revision!=music_rendered_revision_) {
-        lv_label_set_text(music_title_label_,title.c_str());
-        lv_label_set_text(music_artist_label_,artist.c_str());
-        lv_label_set_text(music_lyric_label_,lyric.c_str());
-        for (size_t i = 0; i < music_spectrum_bars_.size(); ++i)
-            lv_bar_set_value(music_spectrum_bars_[i], levels[i], LV_ANIM_OFF);
-        std::string time=FormatTime(position)+" / "+FormatTime(duration);
-        lv_label_set_text(music_time_label_,time.c_str());
-        lv_bar_set_value(music_progress_,duration ?
-            (int)((uint64_t)std::min(position,duration)*1000/duration):0,LV_ANIM_OFF);
-        music_rendered_revision_=music_revision;
-    }
-    if (idle != was_idle_) {
-        if (idle && !music_active) {
-            lv_obj_remove_flag(panel_, LV_OBJ_FLAG_HIDDEN);
-            if (emoji_box_) lv_obj_add_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(panel_, LV_OBJ_FLAG_HIDDEN);
-            if (emoji_box_ && !music_active) lv_obj_remove_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
+        // Avoid invalidating static LVGL text each time the 12-band spectrum
+        // changes (~9Hz); only repaint a label/bar if its contents differ.
+        if (std::strcmp(lv_label_get_text(music_title_label_), title.c_str()) != 0)
+            lv_label_set_text(music_title_label_, title.c_str());
+        if (std::strcmp(lv_label_get_text(music_artist_label_), artist.c_str()) != 0)
+            lv_label_set_text(music_artist_label_, artist.c_str());
+        if (std::strcmp(lv_label_get_text(music_lyric_label_), lyric.c_str()) != 0)
+            lv_label_set_text(music_lyric_label_, lyric.c_str());
+        for (size_t i = 0; i < music_spectrum_bars_.size(); ++i) {
+            if (lv_bar_get_value(music_spectrum_bars_[i]) != levels[i])
+                lv_bar_set_value(music_spectrum_bars_[i], levels[i], LV_ANIM_OFF);
         }
-        was_idle_ = idle;
+        std::string time = duration ? FormatTime(position)+" / "+FormatTime(duration)
+                                    : "LIVE "+FormatTime(position);
+        if (!playing) time = "II " + time;
+        if (std::strcmp(lv_label_get_text(music_time_label_), time.c_str()) != 0)
+            lv_label_set_text(music_time_label_, time.c_str());
+        // Live radio has no fixed duration: avoid a misleading 00:00 / 00:00.
+        SetVisible(music_progress_, duration > 0);
+        if (duration) lv_bar_set_value(music_progress_,
+            static_cast<int>(static_cast<uint64_t>(std::min(position, duration))*1000/duration),
+            LV_ANIM_OFF);
+        music_rendered_revision_=music_revision;
     }
     if (data_ready && revision != rendered_revision_) {
         char number[32];

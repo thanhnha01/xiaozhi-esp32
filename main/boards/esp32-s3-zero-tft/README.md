@@ -45,6 +45,19 @@ enters the ROM download mode. Never wire the external button to GPIO0.
 
 ## Display notes
 
+The Hi Lily LCD UI is board-local and keeps default Xiaozhi emojis (no GIF
+assets). For all device states, the 240x240 status row reserves space for
+Wi-Fi and the battery percentage. Home (weather/lunar), music (12 spectrum
+bands, lyric, progress/time) and Wi-Fi setup panels occupy y=34..198, safely
+between the top status and the stock bottom subtitle. Long lyrics are
+ellipsized inside a 48px block; the 12 spectrum bars are retained. Live radio
+shows LIVE elapsed time without a fake total-duration progress bar.
+The Wi-Fi setup page wraps the actual AP SSID and browser URL on its own
+panel instead of relying on a one-line scrolling subtitle. Critical low
+battery alerts are foreground overlays and intentionally cover lower content.
+No changes are made to other Xiaozhi boards.
+
+
 This preliminary configuration assumes a **four-wire SPI ST7789**, 240x240,
 SPI mode 0, panel offsets X=0 and Y=0, inversion on. Some 240x240 ST7789
 modules need a nonzero vertical offset (often 80) or different inversion,

@@ -16,6 +16,7 @@ public:
     using SpiLcdDisplay::SpiLcdDisplay;
 
     void SetupUI() override;
+    void SetChatMessage(const char* role, const char* content) override;
     // Playback controller must provide actual audio position; no fake timer.
     void SetMusicTrack(std::string title, std::string artist, uint32_t duration_ms,
                        const std::string& lrc);
@@ -34,7 +35,7 @@ private:
     std::string music_title_, music_artist_;
     uint32_t music_duration_ms_ = 0, music_position_ms_ = 0, music_revision_ = 0;
     uint32_t music_rendered_revision_ = UINT32_MAX;
-    bool music_active_ = false, music_playing_ = false, was_music_ = false;
+    bool music_active_ = false, music_playing_ = false;
     lv_obj_t* music_panel_ = nullptr;
     lv_obj_t* music_title_label_ = nullptr;
     lv_obj_t* music_artist_label_ = nullptr;
@@ -52,8 +53,9 @@ private:
     uint32_t revision_ = 0;
     uint32_t rendered_revision_ = UINT32_MAX;
     bool available_ = false;
-    bool was_idle_ = false;
 
+    lv_obj_t* wifi_panel_ = nullptr;
+    lv_obj_t* wifi_hint_label_ = nullptr;
     lv_obj_t* panel_ = nullptr;
     lv_obj_t* location_label_ = nullptr;
     lv_obj_t* temperature_label_ = nullptr;

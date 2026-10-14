@@ -148,7 +148,7 @@ public:
     void ResetDecoder();
     // Exclusive I2S ownership for local streamed MP3. Does not stop microphone/WakeNet.
     void BeginExternalPlayback();
-    void EndExternalPlayback();
+    void EndExternalPlayback(bool discard_queued_audio = true);
     void SetModelsList(srmodel_list_t* models_list);
 
 private:

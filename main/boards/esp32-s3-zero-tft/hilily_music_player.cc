@@ -219,6 +219,12 @@ bool HiLilyMusicPlayer::HandleRecognizedSpeech(const std::string& recognized_tex
     return false;
 }
 
+void HiLilyMusicPlayer::SetTtsActive(bool active) { tts_active_.store(active); }
+void HiLilyMusicPlayer::SetNotificationActive(bool active) { notification_active_.store(active); }
+bool HiLilyMusicPlayer::HasVoicePriority() const {
+    return tts_active_.load() || notification_active_.load();
+}
+
 HiLilyMusicPlayer& HiLilyMusicPlayer::GetInstance() {
     static HiLilyMusicPlayer player;
     return player;

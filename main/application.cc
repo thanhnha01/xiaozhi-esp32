@@ -648,11 +648,17 @@ void Application::InitializeProtocol() {
                 return;
             }
             if (strcmp(state->valuestring, "start") == 0) {
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+                HiLilyMusicPlayer::GetInstance().SetTtsActive(true);
+#endif
                 Schedule([this]() {
                     aborted_ = false;
                     SetDeviceState(kDeviceStateSpeaking);
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+                HiLilyMusicPlayer::GetInstance().SetTtsActive(false);
+#endif
                 Schedule([this]() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
@@ -1146,7 +1152,13 @@ void Application::StartNotification(std::string audio_url, std::vector<NotifySub
         // Discard microphone audio left over from a previous conversation.
     }
 
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+    HiLilyMusicPlayer::GetInstance().SetNotificationActive(true);
+#endif
     if (!SetDeviceState(kDeviceStateNotifying)) {
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+        HiLilyMusicPlayer::GetInstance().SetNotificationActive(false);
+#endif
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         return;
     }
@@ -1178,6 +1190,9 @@ void Application::StartNotification(std::string audio_url, std::vector<NotifySub
 }
 
 void Application::StopNotification() {
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+    HiLilyMusicPlayer::GetInstance().SetNotificationActive(false);
+#endif
     notify_player_.Stop();
     audio_service_.ResetDecoder();
     auto& board = Board::GetInstance();

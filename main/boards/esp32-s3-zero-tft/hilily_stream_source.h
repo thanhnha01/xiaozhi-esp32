@@ -32,6 +32,6 @@ private:
     std::string url_;
     bool live_ = false, ended_ = false, error_ = false;
     std::atomic<bool> stop_{false};
-    std::atomic<bool> running_{false};
-    TaskHandle_t task_ = nullptr;
+    // Only the producer signals finished, after its last access to this object.
+    std::atomic<bool> finished_{true};
 };

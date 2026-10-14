@@ -16,19 +16,19 @@ constexpr unsigned kMaxReconnect = 3;
 HiLilyStreamSource::~HiLilyStreamSource() { Stop(); }
 
 bool HiLilyStreamSource::Start(std::string url, bool live) {
-    if (task_ || ring_ || url.rfind("https://", 0) != 0 || url.size() > 900) return false;
+    if (!finished_.load() || ring_ || url.rfind("https://", 0) != 0 || url.size() > 900) return false;
     ring_ = static_cast<uint8_t*>(heap_caps_malloc(capacity_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (!ring_) return false;
     url_ = std::move(url);
     live_ = live;
     stop_.store(false);
-    running_.store(true);
-    BaseType_t result = xTaskCreate(Entry, "hilily_http", 6144, this, 3, &task_);
+    finished_.store(false);
+    TaskHandle_t handle = nullptr;
+    BaseType_t result = xTaskCreate(Entry, "hilily_http", 6144, this, 3, &handle);
     if (result != pdPASS) {
-        running_.store(false);
+        finished_.store(true);
         heap_caps_free(ring_);
         ring_ = nullptr;
-        task_ = nullptr;
         return false;
     }
     return true;
@@ -36,10 +36,9 @@ bool HiLilyStreamSource::Start(std::string url, bool live) {
 
 void HiLilyStreamSource::Stop() {
     stop_.store(true);
-    // The producer owns the HTTP socket. Never destroy its ring during a blocking Read().
-    while (running_.load()) vTaskDelay(pdMS_TO_TICKS(20));
-    // The task sets running=false before returning; wait for task termination.
-    while (task_ != nullptr) vTaskDelay(pdMS_TO_TICKS(5));
+    // The producer owns HTTP and the ring; wait for its last object access.
+    // No task handle is shared: avoids a create/exit handle-publishing race.
+    while (!finished_.load()) vTaskDelay(pdMS_TO_TICKS(20));
     if (ring_) {
         heap_caps_free(ring_);
         ring_ = nullptr;
@@ -88,9 +87,10 @@ int HiLilyStreamSource::Read(uint8_t* dst, size_t size,
 }
 
 void HiLilyStreamSource::Entry(void* arg) {
-    static_cast<HiLilyStreamSource*>(arg)->Run();
-    // task_ is cleared only after all socket/ring accesses have ended.
-    static_cast<HiLilyStreamSource*>(arg)->task_ = nullptr;
+    auto* source = static_cast<HiLilyStreamSource*>(arg);
+    source->Run();
+    source->finished_.store(true);
+    // No further access to source after finished=true.
     vTaskDelete(nullptr);
 }
 
@@ -152,5 +152,4 @@ void HiLilyStreamSource::Run() {
         ended_ = completed;
         error_ = !completed && !stop_.load();
     }
-    running_.store(false);
 }

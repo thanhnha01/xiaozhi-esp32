@@ -109,7 +109,7 @@ void HiLilyStreamSource::Run() {
         // Byte-accurate MP3 continuation: only accept 206 when requesting Range.
         const bool ranged = !live_ && received != 0;
         if (ranged) http->SetHeader("Range", "bytes=" + std::to_string(received) + "-");
-        bool opened = http->Open("GET", url_);
+        const auto opened = http->Open("GET", url_);
         auto status = opened ? http->GetStatusCode() : decltype(http->GetStatusCode()){};
         const bool valid = opened && status && *status == (ranged ? 206 : 200);
         if (!valid) {

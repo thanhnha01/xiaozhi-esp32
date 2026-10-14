@@ -176,7 +176,7 @@ struct Resampler {
             double frac = source_position - static_cast<double>(idx);
             int16_t left = idx < start && has_previous ? previous_sample : sample(idx < start ? 0 : idx - start);
             int16_t right = sample(std::min<uint64_t>(frames-1, idx+1 < start ? 0 : idx+1-start));
-            output.push_back(static_cast<int16_t>(std::clamp(
+            output.push_back(static_cast<int16_t>(std::clamp<int32_t>(
                 static_cast<int32_t>(std::lround(left + (right-left)*frac)), -32768, 32767)));
             source_position += step;
         }

@@ -3,6 +3,7 @@
 
 #include "display/lcd_display.h"
 
+#include <array>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -20,6 +21,8 @@ public:
                        const std::string& lrc);
     void SetMusicPosition(uint32_t position_ms, bool playing);
     void ClearMusic();
+    // Precomputed lightweight 12-band levels, never touch LVGL from audio task.
+    void SetMusicSpectrum(const std::array<uint8_t, 12>& levels);
     void UpdateStatusBar(bool update_all = false) override;
     void SetHomeData(std::string location, std::string condition,
                      std::string lunar_date, double temperature);
@@ -38,6 +41,8 @@ private:
     lv_obj_t* music_lyric_label_ = nullptr;
     lv_obj_t* music_time_label_ = nullptr;
     lv_obj_t* music_progress_ = nullptr;
+    std::array<lv_obj_t*, 12> music_spectrum_bars_{};
+    std::array<uint8_t, 12> music_spectrum_{};
 
     std::mutex home_mutex_;
     std::string location_;

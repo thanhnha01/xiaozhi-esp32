@@ -11,6 +11,7 @@
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <esp_heap_caps.h>
 #include <cJSON.h>
 #include <freertos/FreeRTOS.h>
@@ -183,6 +184,31 @@ struct Resampler {
         input_frames = finish;
     }
 };
+// Small 12-band Goertzel spectrum for 240x240 TFT; no FFT heap allocations.
+// Levels are approximate magnitudes, not a calibrated spectrum analyzer.
+void UpdateMusicSpectrum(HiLilyDisplay* display, const std::vector<int16_t>& pcm) {
+    if (!display || pcm.size() < 256) return;
+    constexpr int sample_rate = 24000;
+    constexpr int n = 256;
+    constexpr int freq[12] = {120, 180, 265, 390, 580, 850, 1250, 1850, 2700, 3900, 5600, 8000};
+    std::array<uint8_t, 12> levels{};
+    const size_t step = (pcm.size() - 1) / (n - 1);
+    for (int band = 0; band < 12; ++band) {
+        const float omega = 2.0f * 3.14159265f * freq[band] / sample_rate;
+        const float coeff = 2.0f * std::cos(omega);
+        float q0 = 0, q1 = 0, q2 = 0;
+        for (int j = 0; j < n; ++j) {
+            const float sample = pcm[static_cast<size_t>(j) * step] / 32768.0f;
+            q0 = sample + coeff * q1 - q2;
+            q2 = q1;
+            q1 = q0;
+        }
+        const float power = std::max(0.0f, q1*q1 + q2*q2 - coeff*q1*q2);
+        const int level = static_cast<int>(std::sqrt(power) * 9.0f);
+        levels[band] = static_cast<uint8_t>(std::clamp(level, 0, 100));
+    }
+    display->SetMusicSpectrum(levels);
+}
 }  // namespace
 
 bool HiLilyMusicPlayer::HandleRecognizedSpeech(const std::string& recognized_text) {
@@ -424,6 +450,7 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
     bool ended = false,success = false,decode_error=false;
     uint32_t frames_decoded = 0;
     bool pause_was_reported = false;
+    int64_t next_spectrum_us = 0;
     while (!Cancelled(generation)) {
         // Update LVGL on pause without advancing the audio clock.
         bool paused_now = false;
@@ -436,18 +463,29 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
                 static_cast<uint64_t>(resampler.elapsed_samples)*1000/kOutputHz), !paused_now);
             pause_was_reported = paused_now;
         }
-        if (!AwaitPlay(generation)) break;
-        // TTS and notifications have higher priority than music. Release the
-        // codec while retaining the MP3 buffer and lyric playback clock.
-        if (HasVoicePriority()) {
+        // TTS/notifications or a paused session must not retain I2S ownership.
+        // Recheck state while waiting; Stop() always cancels the wait.
+        bool paused_requested;
+        {
+            std::lock_guard<std::mutex> guard(mutex_);
+            paused_requested = paused_;
+        }
+        if (HasVoicePriority() || paused_requested) {
             if (owns_output) {
                 service.EndExternalPlayback(false);
                 owns_output = false;
             }
             display_->SetMusicPosition(static_cast<uint32_t>(
                 static_cast<uint64_t>(resampler.elapsed_samples)*1000/kOutputHz), false);
-            while (HasVoicePriority() && !Cancelled(generation))
+            while (!Cancelled(generation)) {
+                bool paused;
+                {
+                    std::lock_guard<std::mutex> guard(mutex_);
+                    paused = paused_;
+                }
+                if (!HasVoicePriority() && !paused) break;
                 vTaskDelay(pdMS_TO_TICKS(35));
+            }
             if (Cancelled(generation)) break;
         }
         // Wait until the queued voice frames are drained before reclaiming DAC.
@@ -506,8 +544,29 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
                 // OutputData is synchronous: stop/pause is checked again
                 // immediately before submitting each decoded PCM block.
                 if (!AwaitPlay(generation) || Cancelled(generation)) break;
-                if (HasVoicePriority()) continue;
+                // A voice request arriving inside a decoded frame still needs
+                // to yield before output, without silently dropping PCM.
+                while (HasVoicePriority() && !Cancelled(generation)) {
+                    if (owns_output) {
+                        service.EndExternalPlayback(false);
+                        owns_output = false;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(30));
+                }
+                if (Cancelled(generation)) break;
+                while (!owns_output && !service.IsPlaybackIdle() && !Cancelled(generation))
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                if (Cancelled(generation)) break;
+                if (!owns_output) {
+                    service.BeginExternalPlayback();
+                    codec->EnableOutput(true);
+                    owns_output = true;
+                }
                 codec->OutputData(playback);
+                if (esp_timer_get_time() >= next_spectrum_us) {
+                    UpdateMusicSpectrum(display_, playback);
+                    next_spectrum_us = esp_timer_get_time() + 110000;
+                }
                 resampler.elapsed_samples+=playback.size();
                 ++frames_decoded;
                 UpdatePosition(generation,static_cast<uint32_t>(

@@ -4,6 +4,7 @@
 #include "display/lcd_display.h"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -44,6 +45,7 @@ private:
     lv_obj_t* music_progress_ = nullptr;
     std::array<lv_obj_t*, 12> music_spectrum_bars_{};
     std::array<uint8_t, 12> music_spectrum_{};
+    std::atomic<bool> spectrum_refresh_queued_{false};
 
     std::mutex home_mutex_;
     std::string location_;

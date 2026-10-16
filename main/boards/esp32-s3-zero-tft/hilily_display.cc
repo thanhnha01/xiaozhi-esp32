@@ -130,7 +130,15 @@ void HiLilyDisplay::SetMusicSpectrum(const std::array<uint8_t, 12>& levels) {
     }
     // Main clock ticks only once a second. Explicitly schedule a screen
     // refresh for ~9Hz spectrum updates, outside the music mutex.
-    Application::GetInstance().Schedule([this]() { UpdateStatusBar(); });
+    // Bound UI work to a single pending refresh. During WebSocket/TLS
+    // reconnects the main task may be blocked for seconds; unlimited queued
+    // callbacks otherwise consume heap and cause jerky catch-up redraws.
+    if (!spectrum_refresh_queued_.exchange(true)) {
+        Application::GetInstance().Schedule([this]() {
+            UpdateStatusBar();
+            spectrum_refresh_queued_.store(false);
+        });
+    }
 }
 
 void HiLilyDisplay::ClearMusic() {

@@ -1016,11 +1016,15 @@ bool Application::CanStartScheduledBriefing() {
 
 void Application::StartScheduledMorningBriefing(const std::string& day) {
     Schedule([this, day]() {
-        // Recheck under the single Application task, after the HTTP task's
-        // daily NVS marker has been stored.
+        // Never claim today's NVS slot until we recheck that the speaker is
+        // still idle. The HTTP task does not write NVS.
         if (!CanStartScheduledBriefing() || morning_briefing_.Active() ||
             !protocol_ || !ota_ || !ota_->HasWebsocketConfig() ||
             !audio_service_.IsPlaybackIdle()) return;
+        {
+            Settings previous("morning_run", false);
+            if (previous.GetString("last_day", "") == day) return;
+        }
         morning_briefing_.BeginScheduled(day,esp_timer_get_time());
         if (!SetDeviceState(kDeviceStateConnecting)) {
             CancelBriefing("state_transition_failed");
@@ -1032,6 +1036,12 @@ void Application::StartScheduledMorningBriefing(const std::string& day) {
             return;
         }
         SetListeningMode(GetDefaultListeningMode());
+        // Settings commits on destructor, within this main-task callback.
+        // Guarantee at-most-one scheduled attempt across power cycles.
+        {
+            Settings once("morning_run", true);
+            once.SetString("last_day", day);
+        }
         protocol_->SendWakeWordDetected(MorningBriefing::InitialRequest());
         ESP_LOGI(TAG,"Morning briefing scheduled start for %s (UTC+7)",
                  day.c_str());

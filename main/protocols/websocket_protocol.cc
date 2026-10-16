@@ -106,54 +106,60 @@ bool WebsocketProtocol::OpenAudioChannel() {
     websocket_->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
 
     websocket_->OnData([this](const char* data, size_t len, bool binary) {
+        if (!data) return;
         if (binary) {
             if (on_incoming_audio_ != nullptr) {
+                const uint8_t* payload = reinterpret_cast<const uint8_t*>(data);
+                size_t payload_len = len;
+                uint32_t timestamp = 0;
+                // XiaoZhi Opus packets are tiny; reject oversized or
+                // truncated frames before allocating/copying payload memory.
+                constexpr size_t kMaxOpusPacketBytes = 16 * 1024;
                 if (version_ == 2) {
-                    BinaryProtocol2* bp2 = (BinaryProtocol2*)data;
-                    bp2->version = ntohs(bp2->version);
-                    bp2->type = ntohs(bp2->type);
-                    bp2->timestamp = ntohl(bp2->timestamp);
-                    bp2->payload_size = ntohl(bp2->payload_size);
-                    auto payload = (uint8_t*)bp2->payload;
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = bp2->timestamp,
-                        .payload = std::vector<uint8_t>(payload, payload + bp2->payload_size)}));
+                    if (len < sizeof(BinaryProtocol2)) return;
+                    BinaryProtocol2 header{};
+                    memcpy(&header, data, sizeof(header));
+                    const size_t declared = ntohl(header.payload_size);
+                    if (ntohs(header.type) != 0 || declared > len - sizeof(header) ||
+                        declared == 0 || declared > kMaxOpusPacketBytes) return;
+                    timestamp = ntohl(header.timestamp);
+                    payload += sizeof(header);
+                    payload_len = declared;
                 } else if (version_ == 3) {
-                    BinaryProtocol3* bp3 = (BinaryProtocol3*)data;
-                    bp3->type = bp3->type;
-                    bp3->payload_size = ntohs(bp3->payload_size);
-                    auto payload = (uint8_t*)bp3->payload;
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = 0,
-                        .payload = std::vector<uint8_t>(payload, payload + bp3->payload_size)}));
-                } else {
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = 0,
-                        .payload = std::vector<uint8_t>((uint8_t*)data, (uint8_t*)data + len)}));
+                    if (len < sizeof(BinaryProtocol3)) return;
+                    BinaryProtocol3 header{};
+                    memcpy(&header, data, sizeof(header));
+                    const size_t declared = ntohs(header.payload_size);
+                    if (header.type != 0 || declared > len - sizeof(header) ||
+                        declared == 0 || declared > kMaxOpusPacketBytes) return;
+                    payload += sizeof(header);
+                    payload_len = declared;
+                } else if (payload_len == 0 || payload_len > kMaxOpusPacketBytes) {
+                    return;
                 }
+                on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
+                    .sample_rate = server_sample_rate_,
+                    .frame_duration = server_frame_duration_,
+                    .timestamp = timestamp,
+                    .payload = std::vector<uint8_t>(payload, payload + payload_len)}));
             }
         } else {
-            // Parse JSON data
-            auto root = cJSON_ParseWithLength(data, len);
-            auto type = cJSON_GetObjectItem(root, "type");
-            if (cJSON_IsString(type)) {
-                if (strcmp(type->valuestring, "hello") == 0) {
-                    ParseServerHello(root);
-                } else {
-                    if (on_incoming_json_ != nullptr) {
+            const cJSON* root = cJSON_ParseWithLength(data, len);
+            if (!root) {
+                ESP_LOGW(TAG, "Discarding malformed server JSON");
+            } else {
+                auto type = cJSON_GetObjectItem(root, "type");
+                if (cJSON_IsString(type)) {
+                    if (strcmp(type->valuestring, "hello") == 0) {
+                        ParseServerHello(root);
+                    } else if (on_incoming_json_ != nullptr) {
                         on_incoming_json_(root);
                     }
+                } else {
+                    ESP_LOGE(TAG, "Missing message type in server JSON");
                 }
-            } else {
-                ESP_LOGE(TAG, "Missing message type, data: %s", std::string(data, len).c_str());
+                cJSON_Delete(const_cast<cJSON*>(root));
             }
-            cJSON_Delete(root);
         }
         last_incoming_time_ = std::chrono::steady_clock::now();
     });

@@ -284,7 +284,10 @@ bool HiLilyMusicPlayer::Play(std::string title, std::string artist) {
     position_ms_ = 0;
     playback_error_.clear();
     ++generation_;
-    if (!task_) {
+    if (!worker_running_) {
+        // Mark running before creation while holding mutex_ so the worker
+        // cannot finish and have its cleared state overwritten by Play().
+        worker_running_ = true;
         // MP3 decode, TLS and LVGL share scarce internal RAM on N4R2.
         // Allocate the music worker stack in external PSRAM when available.
         TaskHandle_t created = nullptr;
@@ -296,11 +299,10 @@ bool HiLilyMusicPlayer::Play(std::string title, std::string artist) {
             ok = xTaskCreate(WorkerEntry, "hilily_mp3", 12288, this, 3, &created);
         }
         if (ok != pdPASS) {
-            task_ = nullptr;
+            worker_running_ = false;
             pending_ = false;
             return false;
         }
-        task_ = created;
     }
     return true;
 }
@@ -373,7 +375,7 @@ void HiLilyMusicPlayer::Worker() {
         uint32_t generation = 0;
         {
             std::lock_guard<std::mutex> guard(mutex_);
-            if (!pending_) { task_ = nullptr; return; }
+            if (!pending_) { worker_running_ = false; return; }
             song = requested_title_;
             artist = requested_artist_;
             generation = generation_;

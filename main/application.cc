@@ -191,6 +191,7 @@ void Application::Run() {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
 
         if (bits & MAIN_EVENT_ERROR) {
+            CancelBriefing("protocol_error");
             if (GetDeviceState() == kDeviceStateNotifying) {
                 StopNotification();
             }
@@ -219,6 +220,7 @@ void Application::Run() {
             if (audio_service_.IsPlaybackIdle()) {
                 notify_player_.OnPlaybackDrained();
             }
+            MaybeContinueBriefing();
             // Deferred listening start (auto mode): the playback queue has
             // drained, so it is now safe to enable voice processing.
             if (pending_listening_start_ && GetDeviceState() == kDeviceStateListening &&
@@ -276,6 +278,15 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+            if (morning_briefing_.TimedOut(esp_timer_get_time())) {
+                CancelBriefing("part_timeout");
+                if (GetDeviceState() == kDeviceStateSpeaking)
+                    AbortSpeaking(kAbortReasonNone);
+                if (GetDeviceState() == kDeviceStateListening)
+                    SetDeviceState(kDeviceStateIdle);
+            }
+#endif
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
@@ -317,6 +328,7 @@ void Application::HandleNetworkConnectedEvent() {
 }
 
 void Application::HandleNetworkDisconnectedEvent() {
+    CancelBriefing("network_disconnected");
     // Close current conversation when network disconnected
     auto state = GetDeviceState();
     if (state == kDeviceStateNotifying) {
@@ -576,6 +588,7 @@ void Application::InitializeProtocol() {
 #endif
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
+            CancelBriefing("audio_channel_closed");
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
@@ -660,6 +673,9 @@ void Application::InitializeProtocol() {
 #endif
                 Schedule([this]() {
                     aborted_ = false;
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+                    morning_briefing_.TtsStarted(esp_timer_get_time());
+#endif
                     SetDeviceState(kDeviceStateSpeaking);
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
@@ -667,6 +683,9 @@ void Application::InitializeProtocol() {
                 HiLilyMusicPlayer::GetInstance().SetTtsActive(false);
 #endif
                 Schedule([this]() {
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+                    morning_briefing_.TtsStopped();
+#endif
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
@@ -674,6 +693,7 @@ void Application::InitializeProtocol() {
                             SetDeviceState(kDeviceStateListening);
                         }
                     }
+                    MaybeContinueBriefing();
                 });
             } else if (strcmp(state->valuestring, "sentence_start") == 0) {
                 auto text = cJSON_GetObjectItem(root, "text");
@@ -700,6 +720,11 @@ void Application::InitializeProtocol() {
                     glyphs.clear();
                 }
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+                Schedule([this, spoken = std::string(text->valuestring)]() {
+                    HandleBriefingStt(spoken);
+                });
+#endif
 #if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
                 // Recognize a small, deterministic set of Vietnamese music
                 // commands and call Worker directly without LLM tool routing.
@@ -824,6 +849,7 @@ void Application::StartListening() { xEventGroupSetBits(event_group_, MAIN_EVENT
 void Application::StopListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING); }
 
 void Application::HandleToggleChatEvent() {
+    CancelBriefing("manual_toggle");
     auto state = GetDeviceState();
 
     if (state == kDeviceStateNotifying) {
@@ -888,6 +914,7 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
 }
 
 void Application::HandleStartListeningEvent() {
+    CancelBriefing("manual_listen");
     auto state = GetDeviceState();
 
     if (state == kDeviceStateNotifying) {
@@ -924,6 +951,7 @@ void Application::HandleStartListeningEvent() {
 }
 
 void Application::HandleStopListeningEvent() {
+    CancelBriefing("manual_stop");
     auto state = GetDeviceState();
 
     if (state == kDeviceStateNotifying) {
@@ -940,7 +968,79 @@ void Application::HandleStopListeningEvent() {
     }
 }
 
+
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+void Application::CancelBriefing(const char* reason) {
+    if (!morning_briefing_.Active()) return;
+    ESP_LOGI(TAG,"Morning briefing stopped at %u/12: %s",
+             morning_briefing_.Part(),reason);
+    morning_briefing_.Cancel();
+}
+
+void Application::HandleBriefingStt(const std::string& text) {
+    if (morning_briefing_.ShouldStopForSpeech(text)) {
+        CancelBriefing("user_requested_stop");
+    } else if (morning_briefing_.StartedBySpeech(text, esp_timer_get_time())) {
+        ESP_LOGI(TAG,"Morning briefing started by voice");
+    }
+}
+
+void Application::MaybeContinueBriefing() {
+    std::string next;
+    const auto result = morning_briefing_.NextIfReady(
+        audio_service_.IsPlaybackIdle(),
+        protocol_ && protocol_->IsAudioChannelOpened(),
+        esp_timer_get_time(),next);
+    switch(result) {
+    case MorningBriefing::Advance::Next:
+        ESP_LOGI(TAG,"Morning briefing continuation part %u/12",
+                 morning_briefing_.Part());
+        protocol_->SendWakeWordDetected(next);
+        break;
+    case MorningBriefing::Advance::Finished:
+        SetDeviceState(kDeviceStateIdle);
+        break;
+    case MorningBriefing::Advance::ChannelLost:
+        ESP_LOGW(TAG,"Morning briefing stopped: channel lost");
+        break;
+    default:
+        break;
+    }
+}
+
+bool Application::CanStartScheduledBriefing() {
+    // Can be called from HTTP task; avoid reading briefing or protocol here.
+    return GetDeviceState()==kDeviceStateIdle &&
+        !HiLilyMusicPlayer::GetInstance().IsBusy();
+}
+
+void Application::StartScheduledMorningBriefing(const std::string& day) {
+    Schedule([this, day]() {
+        // Recheck under the single Application task, after the HTTP task's
+        // daily NVS marker has been stored.
+        if (!CanStartScheduledBriefing() || morning_briefing_.Active() ||
+            !protocol_ || !ota_ || !ota_->HasWebsocketConfig() ||
+            !audio_service_.IsPlaybackIdle()) return;
+        morning_briefing_.BeginScheduled(day,esp_timer_get_time());
+        if (!SetDeviceState(kDeviceStateConnecting)) {
+            CancelBriefing("state_transition_failed");
+            return;
+        }
+        if (!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
+            CancelBriefing("websocket_open_failed");
+            SetDeviceState(kDeviceStateIdle);
+            return;
+        }
+        SetListeningMode(GetDefaultListeningMode());
+        protocol_->SendWakeWordDetected(MorningBriefing::InitialRequest());
+        ESP_LOGI(TAG,"Morning briefing scheduled start for %s (UTC+7)",
+                 day.c_str());
+    });
+}
+#endif
+
 void Application::HandleWakeWordDetectedEvent() {
+    CancelBriefing("user_wake_word");
     if (!protocol_) {
         return;
     }
@@ -1073,6 +1173,14 @@ void Application::HandleStateChangedEvent() {
         case kDeviceStateListening:
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+            if (morning_briefing_.Active()) {
+                // Do not start competing ASR while a speech segment drains.
+                audio_service_.EnableVoiceProcessing(false);
+                audio_service_.EnableWakeWordDetection(true);
+                break;
+            }
+#endif
 
             // Make sure the audio processor is running
             if (play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
@@ -1112,6 +1220,7 @@ void Application::HandleStateChangedEvent() {
             // Do nothing
             break;
     }
+    MaybeContinueBriefing();
 }
 
 void Application::StartListeningAudio() {
@@ -1228,6 +1337,7 @@ void Application::Schedule(std::function<void()>&& callback) {
 }
 
 void Application::AbortSpeaking(AbortReason reason) {
+    CancelBriefing("speech_aborted");
     ESP_LOGI(TAG, "Abort speaking");
     aborted_ = true;
     if (protocol_) {
@@ -1416,6 +1526,7 @@ void Application::PlaySound(const std::string_view& sound) { audio_service_.Play
 
 void Application::ResetProtocol() {
     Schedule([this]() {
+        CancelBriefing("protocol_reset");
         if (GetDeviceState() == kDeviceStateNotifying) {
             StopNotification();
         }

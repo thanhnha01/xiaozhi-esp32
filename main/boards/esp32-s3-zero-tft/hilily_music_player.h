@@ -21,6 +21,7 @@ public:
     bool Resume();
     bool Stop();
     std::string StatusJson();
+    bool IsBusy(); // Loading, playing or paused music blocks morning radio
     // TTS and spoken notifications take priority over streamed audio.
     void SetTtsActive(bool active);
     void SetNotificationActive(bool active);

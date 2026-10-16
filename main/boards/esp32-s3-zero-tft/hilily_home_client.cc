@@ -214,8 +214,9 @@ void HomeTask(void* parameter) {
     }
     // This NVS key survives ordinary app-only reflashing and prevents replays
     // on a reboot or network reconnection within the same Vietnam calendar day.
-    Settings daily("morning_run", true);
-    std::string last_run = daily.GetString("last_day", "");
+    // Read-only NVS per due-time check; Application commits the successful
+    // start on its own task. Never keep a writable Settings object alive in
+    // this infinite loop: Settings only commits in its destructor.
     MorningSchedule schedule;
     int64_t next_home = 0, next_schedule = 0;
     while (true) {
@@ -233,19 +234,21 @@ void HomeTask(void* parameter) {
         std::tm vietnam = {};
         std::string day;
         if (VietnamClock(schedule, vietnam, day) && schedule.enabled &&
-            (schedule.days & (1U << vietnam.tm_wday)) && last_run != day) {
+            (schedule.days & (1U << vietnam.tm_wday))) {
             const int minute = vietnam.tm_hour * 60 + vietnam.tm_min;
             // Wait for idle up to 10 minutes, never interrupt active voice/music.
             if (minute >= schedule.minute_of_day &&
                 minute < schedule.minute_of_day + 10 &&
                 Application::GetInstance().CanStartScheduledBriefing() &&
                 !HiLilyMusicPlayer::GetInstance().IsBusy()) {
-                // Mark before scheduling. If app becomes busy in the meantime,
-                // skip today's run rather than speak over the user.
-                daily.SetString("last_day", day);
-                last_run = day;
-                ESP_LOGI(TAG, "Morning schedule due (%s, UTC+7)", day.c_str());
-                Application::GetInstance().StartScheduledMorningBriefing(day);
+                // The main task rechecks busy state and commits a daily NVS
+                // marker only after opening the XiaoZhi audio channel. If
+                // the user starts speaking meanwhile, this slot may retry.
+                Settings daily("morning_run", false);
+                if (daily.GetString("last_day", "") != day) {
+                    ESP_LOGI(TAG, "Morning schedule due (%s, UTC+7)", day.c_str());
+                    Application::GetInstance().StartScheduledMorningBriefing(day);
+                }
             }
         }
         vTaskDelay(pdMS_TO_TICKS(5000));

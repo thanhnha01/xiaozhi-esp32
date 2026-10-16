@@ -40,7 +40,7 @@ private:
     std::mutex mutex_;
     HiLilyDisplay* display_ = nullptr;
     std::string worker_base_, requested_title_, requested_artist_;
-    TaskHandle_t task_ = nullptr;
+    bool worker_running_ = false; // guarded by mutex_; set before task creation
     uint32_t generation_ = 0;
     bool pending_ = false, paused_ = false, active_ = false;
     std::atomic<bool> tts_active_{false};

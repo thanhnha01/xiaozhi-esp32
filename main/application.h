@@ -20,6 +20,9 @@
 #include "device_state.h"
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+#include "boards/esp32-s3-zero-tft/morning_briefing.h"
+#endif
 
 // Main event bits
 #define MAIN_EVENT_SCHEDULE             (1 << 0)
@@ -107,10 +110,11 @@ public:
      * Sends MAIN_EVENT_STOP_LISTENING to be handled in Run()
      */
     void StopListening();
-    // Safe for the board's existing HTTP task to query; actual start rechecks
-    // state on the Application main task and never interrupts active playback.
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+    // HTTP task reads atomic state; actual start rechecks on Application task.
     bool CanStartScheduledBriefing();
     void StartScheduledMorningBriefing(const std::string& vietnam_day);
+#endif
 
     void Reboot();
     void WakeWordInvoke(const std::string& wake_word);
@@ -155,14 +159,9 @@ private:
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     bool pending_listening_start_ = false;  // Waiting for playback to drain before starting listening (auto mode)
-    // Morning briefing radio (part 1 is voice, parts 2-12 use listen.detect).
-    bool briefing_active_ = false;
-    bool briefing_tts_started_ = false;
-    bool briefing_tts_stopped_ = false;
-    bool briefing_waiting_response_ = false;
-    uint8_t briefing_part_ = 0;
-    std::string briefing_scheduled_day_; // empty for a voice-requested briefing
-    int64_t briefing_last_activity_us_ = 0;
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
+    MorningBriefing morning_briefing_;
+#endif
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 
@@ -176,9 +175,15 @@ private:
     void HandleNetworkDisconnectedEvent();
     void HandleActivationDoneEvent();
     void HandleWakeWordDetectedEvent();
+#if CONFIG_BOARD_TYPE_ESP32_S3_ZERO_TFT
     void HandleBriefingStt(const std::string& text);
     void MaybeContinueBriefing();
     void CancelBriefing(const char* reason);
+#else
+    // The rest of XiaoZhi still uses this shared Application class.
+    void MaybeContinueBriefing() {}
+    void CancelBriefing(const char*) {}
+#endif
     void ContinueOpenAudioChannel(ListeningMode mode);
     void BeginWakeWordInvoke(const std::string& wake_word);
     void ContinueWakeWordInvoke(const std::string& wake_word);

@@ -190,9 +190,9 @@ bool VietnamClock(const MorningSchedule& schedule, std::tm& clock,
     // Worker returns Unix UTC time. Vietnam has fixed UTC+7 (no DST).
     const time_t vn_time = static_cast<time_t>(schedule.server_unix + elapsed + 7*3600);
     if (!gmtime_r(&vn_time, &clock)) return false;
-    char buffer[16];
-    snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d",
-             clock.tm_year + 1900, clock.tm_mon + 1, clock.tm_mday);
+    char buffer[16] = {};
+    if (std::strftime(buffer, sizeof(buffer), "%Y-%m-%d", &clock) != 10)
+        return false;
     day = buffer;
     return true;
 }

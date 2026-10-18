@@ -26,10 +26,10 @@ private:
     HiLilyDisplay* display_ = nullptr;
 
     void InitializeUnusedSensePins() {
-        // GPIO10/16 are no longer connected to any battery/charging sensor.
-        // Define their idle input state with internal pull-ups, without ADC.
+        // GPIO10 is INMP441 data input: I2S owns it, no internal pull-up.
+        // Only unused GPIO16 is an input held high with an internal pull-up.
         gpio_config_t cfg = {};
-        cfg.pin_bit_mask = (1ULL << UNUSED_BATTERY_GPIO) | (1ULL << UNUSED_VBUS_GPIO);
+        cfg.pin_bit_mask = 1ULL << UNUSED_VBUS_GPIO;
         cfg.mode = GPIO_MODE_INPUT;
         cfg.pull_up_en = GPIO_PULLUP_ENABLE;
         cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;

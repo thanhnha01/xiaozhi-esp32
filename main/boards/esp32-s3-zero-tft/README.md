@@ -14,9 +14,9 @@ board has **not yet been hardware-validated**. The LCD controller is assumed to 
 | PCM5102A | DIN | 5 |
 | PCM5102A | VIN / GND | 5V / GND |
 | PCM5102A | 3.5mm analog line output | External AUX/amplifier |
-| INMP441 | SCK / BCLK | 7 |
-| INMP441 | WS / LRCL | 8 |
-| INMP441 | SD / DOUT | 9 |
+| INMP441 | SCK / BCLK | **8** |
+| INMP441 | WS / LRCL | **9** |
+| INMP441 | SD / DOUT | **10** |
 | INMP441 | L/R | GND (left slot) |
 | INMP441 | VDD / GND | 3.3V / GND |
 | TFT ST7789 | SCL / SCK | 12 |
@@ -28,16 +28,16 @@ board has **not yet been hardware-validated**. The LCD controller is assumed to 
 | Onboard WS2812 RGB LED | Data | 21 (already connected) |
 | Onboard BOOT button | Input | 0 (already connected) |
 | External WAKE button | NO pushbutton | GPIO14 to GND (internal pull-up) |
-| Unused battery ADC input | No external connection | GPIO10 (input, internal pull-up) |
+| Former battery ADC pin | Now INMP441 SD | GPIO10 (I2S input, no pull-up) |
 | Unused charge/VBUS input | No external connection | GPIO16 (input, internal pull-up) |
 
 **Important:** Disconnect any old battery/USB-voltage divider from GPIO10
-and GPIO16 before flashing. These inputs now have internal pull-ups enabled,
-and neither measures voltage nor charging state. The UI does not report
-battery percentage or charging, and does not generate low-battery warnings.
-Because INMP441 uses GPIO8 (WS) and GPIO9 (SD), the TFT reset must be
-wired to GPIO17 and **the TFT CS wire must be moved from GPIO9 to GPIO18**.
-Do not connect TFT CS and INMP441 SD to the same GPIO9.
+and GPIO16 before flashing. GPIO10 is the INMP441 data input, NOT a spare
+battery input; its internal pull-ups are not enabled. GPIO16 remains unused
+and internally pulled up. Firmware does not measure battery voltage or
+charging state and does not show battery percentage/charging/low-battery warnings.
+Since INMP441 uses GPIO8 (SCK) and GPIO9 (WS), TFT RST must be wired to GPIO17
+and TFT CS to GPIO18. Do not leave the TFT wired to GPIO8/9.
 
 All modules must share GND. INMP441 uses **3.3V**. PCM5102A is a
 **line-level DAC**, not a speaker power amplifier. Connect its 3.5mm
@@ -147,7 +147,8 @@ and battery charging/low-level rules. These features are not yet all wired
 end-to-end, especially battery module and synchronized music player.
 
 This revision deliberately disables `CONFIG_HILILY_BATTERY_MONITOR` and
-`CONFIG_HILILY_VBUS_SENSE`. GPIO10 and GPIO16 are held as unused
-internally pulled-up inputs. Battery percentage, charging bolt and low-battery
-warnings are unavailable until a sensor is wired and firmware support
-is separately re-enabled.
+`CONFIG_HILILY_VBUS_SENSE`. Former battery ADC GPIO10 is repurposed as the
+INMP441 SD line (no internal pull-up). Only unused GPIO16 is configured as an
+internally pulled-up input. Battery percentage, charging bolt and low-battery
+warnings remain unavailable until sensors and firmware support are separately
+restored.

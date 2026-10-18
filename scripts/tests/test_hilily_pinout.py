@@ -15,10 +15,9 @@ class HiLilyPinoutTests(unittest.TestCase):
         expected = {
             "AUDIO_I2S_SPK_GPIO_MCLK": 1, "AUDIO_I2S_SPK_GPIO_BCLK": 2,
             "AUDIO_I2S_SPK_GPIO_LRCK": 4, "AUDIO_I2S_SPK_GPIO_DOUT": 5,
-            "AUDIO_I2S_MIC_GPIO_SCK": 7, "AUDIO_I2S_MIC_GPIO_WS": 8,
-            "AUDIO_I2S_MIC_GPIO_DIN": 9, "DISPLAY_RST_PIN": 17,
-            "DISPLAY_CS_PIN": 18,
-            "UNUSED_BATTERY_GPIO": 10, "UNUSED_VBUS_GPIO": 16,
+            "AUDIO_I2S_MIC_GPIO_SCK": 8, "AUDIO_I2S_MIC_GPIO_WS": 9,
+            "AUDIO_I2S_MIC_GPIO_DIN": 10, "DISPLAY_RST_PIN": 17,
+            "DISPLAY_CS_PIN": 18, "UNUSED_VBUS_GPIO": 16,
         }
         for name, pin in expected.items():
             self.assertEqual(pins.get(name), pin, name)
@@ -34,7 +33,10 @@ class HiLilyPinoutTests(unittest.TestCase):
         self.assertIn(".mclk = spk_mclk", codec)
         self.assertIn("std_cfg.gpio_cfg.mclk = I2S_GPIO_UNUSED;", codec)
         self.assertIn("GPIO_PULLUP_ENABLE", board_source)
-        self.assertIn("(1ULL << UNUSED_BATTERY_GPIO) | (1ULL << UNUSED_VBUS_GPIO)", board_source)
+        self.assertIn("cfg.pin_bit_mask = 1ULL << UNUSED_VBUS_GPIO;", board_source)
+        self.assertNotIn("UNUSED_BATTERY_GPIO", config)
+        self.assertNotIn("UNUSED_BATTERY_GPIO", board_source)
+        self.assertNotIn("gpio_pullup_en(GPIO_NUM_10)", board_source)
 
     def test_battery_and_vbus_not_active(self):
         config = (BOARD / "config.json").read_text(encoding="utf-8")

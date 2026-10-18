@@ -10,8 +10,8 @@ board has **not yet been hardware-validated**. The LCD controller is assumed to 
 | --- | --- | --- |
 | PCM5102A | SCK / MCLK | 1 (I2S0 MCLK, 6.144 MHz at 24 kHz) |
 | PCM5102A | BCK | 2 |
-| PCM5102A | LCK / LRCK | 4 |
-| PCM5102A | DIN | 5 |
+| PCM5102A | LCK / LRCK | **5** |
+| PCM5102A | DIN | **6** |
 | PCM5102A | VIN / GND | 5V / GND |
 | PCM5102A | 3.5mm analog line output | External AUX/amplifier |
 | INMP441 | SCK / BCLK | **8** |
@@ -43,7 +43,9 @@ All modules must share GND. INMP441 uses **3.3V**. PCM5102A is a
 **line-level DAC**, not a speaker power amplifier. Connect its 3.5mm
 line-out to an amplifier/AUX input, not directly to an unpowered speaker.
 Firmware drives PCM5102A SCK/MCLK on GPIO1; ensure your breakout board
-actually routes this pin to the DAC. Only the left I2S audio slot is used.
+actually routes this pin to the DAC. LRCK is wired to GPIO5 and DIN to GPIO6,
+matching the soldered connections; GPIO4 is not used by this DAC revision.
+Only the left I2S audio slot is used.
 
 Do not use GPIO19/20 for external peripherals; they serve native USB.
 Avoid GPIO3/45/46 (strapping pins) and GPIO33-37 (not exposed on Zero).

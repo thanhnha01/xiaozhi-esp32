@@ -14,7 +14,7 @@ class HiLilyPinoutTests(unittest.TestCase):
                     re.findall(r"^#define\s+(\w+)\s+GPIO_NUM_(\d+)", config, re.M))
         expected = {
             "AUDIO_I2S_SPK_GPIO_MCLK": 1, "AUDIO_I2S_SPK_GPIO_BCLK": 2,
-            "AUDIO_I2S_SPK_GPIO_LRCK": 4, "AUDIO_I2S_SPK_GPIO_DOUT": 5,
+            "AUDIO_I2S_SPK_GPIO_LRCK": 5, "AUDIO_I2S_SPK_GPIO_DOUT": 6,
             "AUDIO_I2S_MIC_GPIO_SCK": 8, "AUDIO_I2S_MIC_GPIO_WS": 9,
             "AUDIO_I2S_MIC_GPIO_DIN": 10, "DISPLAY_RST_PIN": 17,
             "DISPLAY_CS_PIN": 18, "UNUSED_VBUS_GPIO": 16,

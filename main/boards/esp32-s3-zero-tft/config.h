@@ -16,9 +16,9 @@
 // I2S0 TX: PCM5102A. Only the left DAC channel is populated by
 // the current NoAudioCodecSimplex mono output; use L for mono audio.
 #define AUDIO_I2S_SPK_GPIO_MCLK   GPIO_NUM_1  // PCM5102A SCK/MCLK (24kHz x 256)
-#define AUDIO_I2S_SPK_GPIO_LRCK   GPIO_NUM_4
+#define AUDIO_I2S_SPK_GPIO_LRCK   GPIO_NUM_5
 #define AUDIO_I2S_SPK_GPIO_BCLK   GPIO_NUM_2
-#define AUDIO_I2S_SPK_GPIO_DOUT   GPIO_NUM_5
+#define AUDIO_I2S_SPK_GPIO_DOUT   GPIO_NUM_6
 
 #define BOOT_BUTTON_GPIO         GPIO_NUM_0
 #define WAKE_BUTTON_GPIO         GPIO_NUM_14  // External NO pushbutton to GND

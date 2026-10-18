@@ -14,15 +14,15 @@ board has **not yet been hardware-validated**. The LCD controller is assumed to 
 | PCM5102A | DIN | 5 |
 | PCM5102A | VIN / GND | 5V / GND |
 | PCM5102A | 3.5mm analog line output | External AUX/amplifier |
-| INMP441 | SCK / BCLK | 6 |
-| INMP441 | WS / LRCL | 7 |
-| INMP441 | SD / DOUT | 8 |
+| INMP441 | SCK / BCLK | 7 |
+| INMP441 | WS / LRCL | 8 |
+| INMP441 | SD / DOUT | 9 |
 | INMP441 | L/R | GND (left slot) |
 | INMP441 | VDD / GND | 3.3V / GND |
 | TFT ST7789 | SCL / SCK | 12 |
 | TFT ST7789 | SDA / MOSI | 11 |
 | TFT ST7789 | DC / A0 | 15 |
-| TFT ST7789 | CS | 9 |
+| TFT ST7789 | CS | **18 (moved from GPIO9)** |
 | TFT ST7789 | RES / RST | **17 (moved from GPIO8)** |
 | TFT ST7789 | BL / LED | 13 (PWM) |
 | Onboard WS2812 RGB LED | Data | 21 (already connected) |
@@ -35,7 +35,9 @@ board has **not yet been hardware-validated**. The LCD controller is assumed to 
 and GPIO16 before flashing. These inputs now have internal pull-ups enabled,
 and neither measures voltage nor charging state. The UI does not report
 battery percentage or charging, and does not generate low-battery warnings.
-Because INMP441 now occupies GPIO8, move the TFT RST wire to GPIO17.
+Because INMP441 uses GPIO8 (WS) and GPIO9 (SD), the TFT reset must be
+wired to GPIO17 and **the TFT CS wire must be moved from GPIO9 to GPIO18**.
+Do not connect TFT CS and INMP441 SD to the same GPIO9.
 
 All modules must share GND. INMP441 uses **3.3V**. PCM5102A is a
 **line-level DAC**, not a speaker power amplifier. Connect its 3.5mm

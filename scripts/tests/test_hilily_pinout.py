@@ -15,8 +15,9 @@ class HiLilyPinoutTests(unittest.TestCase):
         expected = {
             "AUDIO_I2S_SPK_GPIO_MCLK": 1, "AUDIO_I2S_SPK_GPIO_BCLK": 2,
             "AUDIO_I2S_SPK_GPIO_LRCK": 4, "AUDIO_I2S_SPK_GPIO_DOUT": 5,
-            "AUDIO_I2S_MIC_GPIO_SCK": 6, "AUDIO_I2S_MIC_GPIO_WS": 7,
-            "AUDIO_I2S_MIC_GPIO_DIN": 8, "DISPLAY_RST_PIN": 17,
+            "AUDIO_I2S_MIC_GPIO_SCK": 7, "AUDIO_I2S_MIC_GPIO_WS": 8,
+            "AUDIO_I2S_MIC_GPIO_DIN": 9, "DISPLAY_RST_PIN": 17,
+            "DISPLAY_CS_PIN": 18,
             "UNUSED_BATTERY_GPIO": 10, "UNUSED_VBUS_GPIO": 16,
         }
         for name, pin in expected.items():

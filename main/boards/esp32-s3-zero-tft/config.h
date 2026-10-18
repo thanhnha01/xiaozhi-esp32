@@ -9,9 +9,9 @@
 #define AUDIO_OUTPUT_SAMPLE_RATE  24000
 
 // I2S1 RX: INMP441, connect L/R to GND (left channel).
-#define AUDIO_I2S_MIC_GPIO_WS     GPIO_NUM_7
-#define AUDIO_I2S_MIC_GPIO_SCK    GPIO_NUM_6
-#define AUDIO_I2S_MIC_GPIO_DIN    GPIO_NUM_8
+#define AUDIO_I2S_MIC_GPIO_WS     GPIO_NUM_8
+#define AUDIO_I2S_MIC_GPIO_SCK    GPIO_NUM_7
+#define AUDIO_I2S_MIC_GPIO_DIN    GPIO_NUM_9
 
 // I2S0 TX: PCM5102A. Only the left DAC channel is populated by
 // the current NoAudioCodecSimplex mono output; use L for mono audio.
@@ -25,9 +25,10 @@
 #define BUILTIN_LED_GPIO         GPIO_NUM_21  // Onboard WS2812
 
 // TFT ST7789 240x240, four-wire SPI (assumed controller).
-// Mic SD now uses GPIO8, so TFT reset has moved to free GPIO17.
+// INMP441 SD uses GPIO9 (former TFT CS), while GPIO8 is mic WS.
+// TFT RST remains on GPIO17 and TFT CS moves to GPIO18.
 #define DISPLAY_RST_PIN          GPIO_NUM_17
-#define DISPLAY_CS_PIN           GPIO_NUM_9
+#define DISPLAY_CS_PIN           GPIO_NUM_18
 #define DISPLAY_DC_PIN           GPIO_NUM_15
 // Previous battery ADC and VBUS sense inputs are DISCONNECTED from external
 // dividers and held with internal pull-ups. Do not attach a battery/5V here.

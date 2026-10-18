@@ -14,6 +14,7 @@ on:
       - 'partitions/**'
       - 'sdkconfig.defaults*'
       - 'scripts/build.py'
+      - 'scripts/tests/test_hilily_pinout.py'
       - 'dependencies.lock'
   workflow_dispatch:
 
@@ -34,6 +35,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Validate Hi Lily pinout, clock and disabled battery sensors
+        run: python3 -m unittest discover -s scripts/tests -p 'test_hilily_pinout.py' -v
 
       - name: Build Vietnamese Hi Lily firmware only
         shell: bash

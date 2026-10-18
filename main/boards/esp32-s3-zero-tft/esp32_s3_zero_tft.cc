@@ -9,12 +9,7 @@
 #include "hilily_home_client.h"
 #include "hilily_music_player.h"
 #include "mcp_server.h"
-#if CONFIG_HILILY_BATTERY_MONITOR
-#include "hilily_battery.h"
-#endif
-#if CONFIG_HILILY_VBUS_SENSE
 #include <driver/gpio.h>
-#endif
 
 #include <driver/spi_common.h>
 #include <esp_lcd_panel_io.h>
@@ -29,6 +24,18 @@ private:
     Button boot_button_;
     Button wake_button_;
     HiLilyDisplay* display_ = nullptr;
+
+    void InitializeUnusedSensePins() {
+        // GPIO10/16 are no longer connected to any battery/charging sensor.
+        // Define their idle input state with internal pull-ups, without ADC.
+        gpio_config_t cfg = {};
+        cfg.pin_bit_mask = (1ULL << UNUSED_BATTERY_GPIO) | (1ULL << UNUSED_VBUS_GPIO);
+        cfg.mode = GPIO_MODE_INPUT;
+        cfg.pull_up_en = GPIO_PULLUP_ENABLE;
+        cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        cfg.intr_type = GPIO_INTR_DISABLE;
+        ESP_ERROR_CHECK(gpio_config(&cfg));
+    }
 
     void InitializeSpi() {
         spi_bus_config_t bus_config = {};
@@ -97,6 +104,7 @@ private:
 
 public:
     Esp32S3ZeroTftBoard() : boot_button_(BOOT_BUTTON_GPIO), wake_button_(WAKE_BUTTON_GPIO) {
+        InitializeUnusedSensePins();
         InitializeSpi();
         InitializeDisplay();
         InitializeButtons();
@@ -149,38 +157,17 @@ public:
             AUDIO_I2S_SPK_GPIO_BCLK, AUDIO_I2S_SPK_GPIO_LRCK, AUDIO_I2S_SPK_GPIO_DOUT,
             I2S_STD_SLOT_LEFT,
             AUDIO_I2S_MIC_GPIO_SCK, AUDIO_I2S_MIC_GPIO_WS, AUDIO_I2S_MIC_GPIO_DIN,
-            I2S_STD_SLOT_LEFT);
+            I2S_STD_SLOT_LEFT, AUDIO_I2S_SPK_GPIO_MCLK);
         return &audio_codec;
     }
 
     bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
-#if CONFIG_HILILY_BATTERY_MONITOR
-        static HiLilyBattery battery;
-        if (!battery.ReadLevel(level)) return false;
-#if CONFIG_HILILY_VBUS_SENSE
-        static bool vbus_initialized = []() {
-            gpio_config_t cfg = {};
-            cfg.pin_bit_mask = 1ULL << VBUS_SENSE_GPIO;
-            cfg.mode = GPIO_MODE_INPUT;
-            cfg.intr_type = GPIO_INTR_DISABLE;
-            // External 100k/150k divider already holds LOW when USB VBUS is absent.
-            // Internal pull resistors would distort the divided 5V HIGH level.
-            cfg.pull_up_en = GPIO_PULLUP_DISABLE;
-            cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
-            return gpio_config(&cfg) == ESP_OK;
-        }();
-        // The VBUS input means external 5V is present, not that the cell
-        // is necessarily accepting charge (e.g. its charger may be full).
-        charging = vbus_initialized && gpio_get_level(VBUS_SENSE_GPIO) == 1;
-#else
-        charging = false;  // Charging state unknown without a separate VBUS/CHRG sensor.
-#endif
-        discharging = !charging;
-        return true;
-#else
-        (void)level; (void)charging; (void)discharging;
+        // No cell ADC or charging/VBUS sensor is fitted in this wiring revision.
+        // Return unavailable, never fabricate a percentage or charging icon.
+        (void)level;
+        charging = false;
+        discharging = false;
         return false;
-#endif
     }
 
     Display* GetDisplay() override {

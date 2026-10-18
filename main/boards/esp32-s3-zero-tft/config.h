@@ -9,31 +9,30 @@
 #define AUDIO_OUTPUT_SAMPLE_RATE  24000
 
 // I2S1 RX: INMP441, connect L/R to GND (left channel).
-#define AUDIO_I2S_MIC_GPIO_WS     GPIO_NUM_1
-#define AUDIO_I2S_MIC_GPIO_SCK    GPIO_NUM_2
-#define AUDIO_I2S_MIC_GPIO_DIN    GPIO_NUM_6
+#define AUDIO_I2S_MIC_GPIO_WS     GPIO_NUM_7
+#define AUDIO_I2S_MIC_GPIO_SCK    GPIO_NUM_6
+#define AUDIO_I2S_MIC_GPIO_DIN    GPIO_NUM_8
 
 // I2S0 TX: PCM5102A. Only the left DAC channel is populated by
 // the current NoAudioCodecSimplex mono output; use L for mono audio.
+#define AUDIO_I2S_SPK_GPIO_MCLK   GPIO_NUM_1  // PCM5102A SCK/MCLK (24kHz x 256)
 #define AUDIO_I2S_SPK_GPIO_LRCK   GPIO_NUM_4
-#define AUDIO_I2S_SPK_GPIO_BCLK   GPIO_NUM_5
-#define AUDIO_I2S_SPK_GPIO_DOUT   GPIO_NUM_7
+#define AUDIO_I2S_SPK_GPIO_BCLK   GPIO_NUM_2
+#define AUDIO_I2S_SPK_GPIO_DOUT   GPIO_NUM_5
 
 #define BOOT_BUTTON_GPIO         GPIO_NUM_0
 #define WAKE_BUTTON_GPIO         GPIO_NUM_14  // External NO pushbutton to GND
 #define BUILTIN_LED_GPIO         GPIO_NUM_21  // Onboard WS2812
 
 // TFT ST7789 240x240, four-wire SPI (assumed controller).
-#define DISPLAY_RST_PIN          GPIO_NUM_8
+// Mic SD now uses GPIO8, so TFT reset has moved to free GPIO17.
+#define DISPLAY_RST_PIN          GPIO_NUM_17
 #define DISPLAY_CS_PIN           GPIO_NUM_9
-// 18650 -> 100k -> GPIO10 (ADC1_CH9) -> 100k -> GND
-// The LCD DC pin is permanently moved away from ADC.
 #define DISPLAY_DC_PIN           GPIO_NUM_15
-#define BATTERY_ADC_GPIO        GPIO_NUM_10
-// USB 5V INPUT (not boosted 5V output) -> 100k -> GPIO16 -> 150k -> GND.
-// 5V input is divided to 3.0V HIGH; GPIO16 internal pulls MUST be disabled.
-// HIGH means external USB power present, not proven cell charging current.
-#define VBUS_SENSE_GPIO         GPIO_NUM_16
+// Previous battery ADC and VBUS sense inputs are DISCONNECTED from external
+// dividers and held with internal pull-ups. Do not attach a battery/5V here.
+#define UNUSED_BATTERY_GPIO      GPIO_NUM_10
+#define UNUSED_VBUS_GPIO         GPIO_NUM_16
 #define HILILY_WORKER_BASE_URL "https://xiaozhi-master.nguyennha-020201.workers.dev"
 #define HILILY_WORKER_HOME_URL HILILY_WORKER_BASE_URL "/api/display/home"
 #define DISPLAY_MOSI_PIN         GPIO_NUM_11

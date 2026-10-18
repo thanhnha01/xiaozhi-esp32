@@ -145,7 +145,7 @@ NoAudioCodecSimplex::NoAudioCodecSimplex(int input_sample_rate, int output_sampl
     ESP_LOGI(TAG, "Simplex channels created");
 }
 
-NoAudioCodecSimplex::NoAudioCodecSimplex(int input_sample_rate, int output_sample_rate, gpio_num_t spk_bclk, gpio_num_t spk_ws, gpio_num_t spk_dout, i2s_std_slot_mask_t spk_slot_mask, gpio_num_t mic_sck, gpio_num_t mic_ws, gpio_num_t mic_din, i2s_std_slot_mask_t mic_slot_mask){
+NoAudioCodecSimplex::NoAudioCodecSimplex(int input_sample_rate, int output_sample_rate, gpio_num_t spk_bclk, gpio_num_t spk_ws, gpio_num_t spk_dout, i2s_std_slot_mask_t spk_slot_mask, gpio_num_t mic_sck, gpio_num_t mic_ws, gpio_num_t mic_din, i2s_std_slot_mask_t mic_slot_mask, gpio_num_t spk_mclk){
     duplex_ = false;
     input_sample_rate_ = input_sample_rate;
     output_sample_rate_ = output_sample_rate;
@@ -188,7 +188,7 @@ NoAudioCodecSimplex::NoAudioCodecSimplex(int input_sample_rate, int output_sampl
 
         },
         .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,
+            .mclk = spk_mclk,
             .bclk = spk_bclk,
             .ws = spk_ws,
             .dout = spk_dout,
@@ -207,6 +207,7 @@ NoAudioCodecSimplex::NoAudioCodecSimplex(int input_sample_rate, int output_sampl
     ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, nullptr, &rx_handle_));
     std_cfg.clk_cfg.sample_rate_hz = (uint32_t)input_sample_rate_;
     std_cfg.slot_cfg.slot_mask = mic_slot_mask;
+    std_cfg.gpio_cfg.mclk = I2S_GPIO_UNUSED;  // Only PCM5102A TX emits MCLK.
     std_cfg.gpio_cfg.bclk = mic_sck;
     std_cfg.gpio_cfg.ws = mic_ws;
     std_cfg.gpio_cfg.dout = I2S_GPIO_UNUSED;

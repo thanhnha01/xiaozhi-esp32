@@ -8,32 +8,40 @@ board has **not yet been hardware-validated**. The LCD controller is assumed to 
 
 | Peripheral | Module pin | ESP32-S3-Zero GPIO |
 | --- | --- | --- |
-| INMP441 | SCK / BCLK | 2 |
-| INMP441 | WS / LRCL | 1 |
-| INMP441 | SD / DOUT | 6 |
-| INMP441 | L/R | GND (left slot) |
-| PCM5102A | BCK | 5 |
+| PCM5102A | SCK / MCLK | 1 (I2S0 MCLK, 6.144 MHz at 24 kHz) |
+| PCM5102A | BCK | 2 |
 | PCM5102A | LCK / LRCK | 4 |
-| PCM5102A | DIN | 7 |
+| PCM5102A | DIN | 5 |
+| PCM5102A | VIN / GND | 5V / GND |
+| PCM5102A | 3.5mm analog line output | External AUX/amplifier |
+| INMP441 | SCK / BCLK | 6 |
+| INMP441 | WS / LRCL | 7 |
+| INMP441 | SD / DOUT | 8 |
+| INMP441 | L/R | GND (left slot) |
+| INMP441 | VDD / GND | 3.3V / GND |
 | TFT ST7789 | SCL / SCK | 12 |
 | TFT ST7789 | SDA / MOSI | 11 |
 | TFT ST7789 | DC / A0 | 15 |
 | TFT ST7789 | CS | 9 |
-| TFT ST7789 | RES / RST | 8 |
+| TFT ST7789 | RES / RST | **17 (moved from GPIO8)** |
 | TFT ST7789 | BL / LED | 13 (PWM) |
 | Onboard WS2812 RGB LED | Data | 21 (already connected) |
 | Onboard BOOT button | Input | 0 (already connected) |
 | External WAKE button | NO pushbutton | GPIO14 to GND (internal pull-up) |
-| 18650 voltage divider | 100k (BAT+ to node), 100k (node to GND), 100nF (node to GND) | GPIO10 (ADC1_CH9) |
-| USB input (VBUS) sense | 100k (USB 5V input to node), 150k (node to GND) | GPIO16 (digital input, no internal pulls) |
+| Unused battery ADC input | No external connection | GPIO10 (input, internal pull-up) |
+| Unused charge/VBUS input | No external connection | GPIO16 (input, internal pull-up) |
 
-All modules must share GND. Sense USB **5V INPUT**, not the boost module's persistent **5V OUTPUT**, so HIGH means external charging power is plugged in. The 100k/150k divider reduces 5V to 3.0V at GPIO16 (0V input = LOW). This does **not** prove the battery is actively charging or distinguish a full cell; the charging bolt means VBUS present. Keep ESP32 GPIO below 3.3V and verify wiring before power-up. Never connect raw 5V or raw battery voltage directly to GPIO, and avoid driving a GPIO while the ESP32 is unpowered. INMP441 uses 3.3V power; respect each module's
-power/logic specifications. PCM5102A is **line-level**, not a speaker power
-amplifier: use its **L** output into an AUX input or an amplifier for this
-initial mono-left firmware. The module's SCK/MCLK, XSMT and FMT wiring/jumpers
-must suit I2S without MCLK; many breakout boards generate their own system
-clock, but not every board does. Never connect raw speaker terminals directly
-to PCM5102A.
+**Important:** Disconnect any old battery/USB-voltage divider from GPIO10
+and GPIO16 before flashing. These inputs now have internal pull-ups enabled,
+and neither measures voltage nor charging state. The UI does not report
+battery percentage or charging, and does not generate low-battery warnings.
+Because INMP441 now occupies GPIO8, move the TFT RST wire to GPIO17.
+
+All modules must share GND. INMP441 uses **3.3V**. PCM5102A is a
+**line-level DAC**, not a speaker power amplifier. Connect its 3.5mm
+line-out to an amplifier/AUX input, not directly to an unpowered speaker.
+Firmware drives PCM5102A SCK/MCLK on GPIO1; ensure your breakout board
+actually routes this pin to the DAC. Only the left I2S audio slot is used.
 
 Do not use GPIO19/20 for external peripherals; they serve native USB.
 Avoid GPIO3/45/46 (strapping pins) and GPIO33-37 (not exposed on Zero).
@@ -136,13 +144,8 @@ Vietnamese lunar calendar, mascot emotion assets, music playback lyric/timing,
 and battery charging/low-level rules. These features are not yet all wired
 end-to-end, especially battery module and synchronized music player.
 
-The board preset has `CONFIG_HILILY_BATTERY_MONITOR=y` and
-`CONFIG_HILILY_VBUS_SENSE=y`. GPIO10 reads the 18650 cell through a 100k+100k
-resistor divider and 100nF filter. GPIO16 reports HIGH when the module's
-**USB 5V INPUT** is present through an independent 100k+150k divider;
-LOW otherwise. Both internal GPIO16 pulls are disabled to avoid loading
-that divider. Battery display uses 3.0V = 0% and 4.2V = 100% endpoints;
-this is a rough voltage-based estimate, not a calibrated fuel gauge.
-A USB-input HIGH is labeled as charging in the UI per this build's policy,
-but it does not verify charging current or charger DONE/STAT status.
-The LCD DC pin is permanently GPIO15 to keep GPIO10 free for ADC.
+This revision deliberately disables `CONFIG_HILILY_BATTERY_MONITOR` and
+`CONFIG_HILILY_VBUS_SENSE`. GPIO10 and GPIO16 are held as unused
+internally pulled-up inputs. Battery percentage, charging bolt and low-battery
+warnings are unavailable until a sensor is wired and firmware support
+is separately re-enabled.

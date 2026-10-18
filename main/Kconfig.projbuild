@@ -650,9 +650,9 @@ choice BOARD_TYPE
 endchoice
 
 config HILILY_BATTERY_MONITOR
-    bool "Hi Lily: measure one-cell 18650 voltage via 100k+100k GPIO10 ADC"
+    bool "Hi Lily (legacy optional): measure one-cell 18650 voltage via GPIO10 ADC"
     depends on BOARD_TYPE_ESP32_S3_ZERO_TFT
-    default y
+    default n
     help
         VBAT -> 100k -> GPIO10 (ADC1 channel 9) -> 100k -> GND.
         Displays estimated state of charge, not laboratory fuel gauge data.

@@ -11,7 +11,7 @@ class HiLilyPinoutTests(unittest.TestCase):
     def test_pinout_conflicts_and_audio_clock(self):
         config = (BOARD / "config.h").read_text(encoding="utf-8")
         pins = dict((name, int(pin)) for name, pin in
-                    re.findall(r"^#define\\s+(\\w+)\\s+GPIO_NUM_(\\d+)", config, re.M))
+                    re.findall(r"^#define\s+(\w+)\s+GPIO_NUM_(\d+)", config, re.M))
         expected = {
             "AUDIO_I2S_SPK_GPIO_MCLK": 1, "AUDIO_I2S_SPK_GPIO_BCLK": 2,
             "AUDIO_I2S_SPK_GPIO_LRCK": 4, "AUDIO_I2S_SPK_GPIO_DOUT": 5,

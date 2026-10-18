@@ -1,6 +1,5 @@
 #include "hilily_music_player.h"
 #include "hilily_stream_source.h"
-#include "hilily_display.h"
 #include "application.h"
 #include "board.h"
 #include "audio_codec.h"
@@ -28,7 +27,6 @@
 namespace {
 constexpr const char* TAG = "HiLilyMusic";
 constexpr size_t kMetadataLimit = 8192;
-constexpr size_t kLyricLimit = 32768;
 constexpr size_t kMaxEncoded = 12288;
 constexpr int kOutputHz = 24000;
 constexpr size_t kInputBlock = 2048;
@@ -98,7 +96,7 @@ bool FetchSmall(const std::string& url, size_t limit, std::string& result) {
     return !result.empty();
 }
 struct Track {
-    std::string title, artist, audio, lyric;
+    std::string title, artist, audio;
     uint32_t duration_ms = 0;
 };
 bool ResolveTrack(const std::string& base, const std::string& song,
@@ -119,31 +117,13 @@ bool ResolveTrack(const std::string& base, const std::string& song,
     track.title = GetJsonText(info, "title");
     track.artist = GetJsonText(info, "artist");
     track.audio = GetJsonText(info, "audio_url");
-    track.lyric = GetJsonText(info, "lyric_url");
     cJSON* length = cJSON_GetObjectItemCaseSensitive(info, "duration");
     if (cJSON_IsNumber(length) && length->valuedouble > 0 && length->valuedouble < 86400)
         track.duration_ms = static_cast<uint32_t>(length->valuedouble * 1000);
     cJSON_Delete(data);
     if (track.title.empty()) track.title = song;
     if (track.artist.empty()) track.artist = artist;
-    return ProxyPathAllowed(track.audio, "/proxy_audio") &&
-           (track.lyric.empty() || ProxyPathAllowed(track.lyric, "/proxy_lyric"));
-}
-std::string ReadLyrics(const std::string& base, const std::string& path) {
-    if (!ProxyPathAllowed(path, "/proxy_lyric")) return {};
-    std::string raw;
-    if (!FetchSmall(base + path, kLyricLimit, raw)) return {};
-    if (!raw.empty() && raw[0] == '{') {
-        cJSON* root = cJSON_ParseWithLength(raw.data(), raw.size());
-        if (!root) return {};
-        std::string lyric = GetJsonText(root, "lyric");
-        if (lyric.empty()) lyric = GetJsonText(root, "lyrics");
-        cJSON* data = cJSON_GetObjectItemCaseSensitive(root, "data");
-        if (lyric.empty() && cJSON_IsObject(data)) lyric = GetJsonText(data, "lyric");
-        cJSON_Delete(root);
-        return lyric.size() <= kLyricLimit ? lyric : std::string{};
-    }
-    return raw;
+    return ProxyPathAllowed(track.audio, "/proxy_audio");
 }
 // Resample a decoded MP3 frame to 24kHz/mono. Persist the fractional input
 // index across frames; the timeline counts PCM submitted to I2S, not fetch time.
@@ -185,31 +165,6 @@ struct Resampler {
         input_frames = finish;
     }
 };
-// Small 12-band Goertzel spectrum for 240x240 TFT; no FFT heap allocations.
-// Levels are approximate magnitudes, not a calibrated spectrum analyzer.
-void UpdateMusicSpectrum(HiLilyDisplay* display, const std::vector<int16_t>& pcm) {
-    if (!display || pcm.size() < 256) return;
-    constexpr int sample_rate = 24000;
-    constexpr int n = 256;
-    constexpr int freq[12] = {120, 180, 265, 390, 580, 850, 1250, 1850, 2700, 3900, 5600, 8000};
-    std::array<uint8_t, 12> levels{};
-    const size_t step = (pcm.size() - 1) / (n - 1);
-    for (int band = 0; band < 12; ++band) {
-        const float omega = 2.0f * 3.14159265f * freq[band] / sample_rate;
-        const float coeff = 2.0f * std::cos(omega);
-        float q0 = 0, q1 = 0, q2 = 0;
-        for (int j = 0; j < n; ++j) {
-            const float sample = pcm[static_cast<size_t>(j) * step] / 32768.0f;
-            q0 = sample + coeff * q1 - q2;
-            q2 = q1;
-            q1 = q0;
-        }
-        const float power = std::max(0.0f, q1*q1 + q2*q2 - coeff*q1*q2);
-        const int level = static_cast<int>(std::sqrt(power) * 9.0f);
-        levels[band] = static_cast<uint8_t>(std::clamp(level, 0, 100));
-    }
-    display->SetMusicSpectrum(levels);
-}
 }  // namespace
 
 bool HiLilyMusicPlayer::HandleRecognizedSpeech(const std::string& recognized_text) {
@@ -269,15 +224,14 @@ HiLilyMusicPlayer& HiLilyMusicPlayer::GetInstance() {
     static HiLilyMusicPlayer player;
     return player;
 }
-void HiLilyMusicPlayer::Configure(HiLilyDisplay* display, const char* worker_base) {
+void HiLilyMusicPlayer::Configure(const char* worker_base) {
     std::lock_guard<std::mutex> guard(mutex_);
-    display_ = display;
     worker_base_ = worker_base ? worker_base : "";
 }
 bool HiLilyMusicPlayer::Play(std::string title, std::string artist) {
     if (title.empty() || title.size() > 100 || artist.size() > 100) return false;
     std::lock_guard<std::mutex> guard(mutex_);
-    if (!display_ || worker_base_.rfind("https://",0)!=0) return false;
+    if (worker_base_.rfind("https://",0)!=0) return false;
     requested_title_ = std::move(title);
     requested_artist_ = std::move(artist);
     pending_ = true; paused_ = false;
@@ -288,7 +242,7 @@ bool HiLilyMusicPlayer::Play(std::string title, std::string artist) {
         // Mark running before creation while holding mutex_ so the worker
         // cannot finish and have its cleared state overwritten by Play().
         worker_running_ = true;
-        // MP3 decode, TLS and LVGL share scarce internal RAM on N4R2.
+        // MP3 decode, TLS and WakeNet share scarce internal RAM on N4R2.
         // Allocate the music worker stack in external PSRAM when available.
         TaskHandle_t created = nullptr;
         BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(
@@ -363,7 +317,6 @@ void HiLilyMusicPlayer::UpdatePosition(uint32_t generation, uint32_t elapsed_ms)
         if (generation != generation_) return;
         position_ms_ = elapsed_ms;
     }
-    display_->SetMusicPosition(elapsed_ms, true);
 }
 void HiLilyMusicPlayer::WorkerEntry(void* arg) {
     static_cast<HiLilyMusicPlayer*>(arg)->Worker();
@@ -387,8 +340,6 @@ void HiLilyMusicPlayer::Worker() {
             std::lock_guard<std::mutex> guard(mutex_);
             active_ = false;
             if (!completed && generation == generation_) playback_error_ = "stream_failed";
-            // Keep the previous screen until the replacement track takes over.
-            if (!pending_ && generation == generation_ && display_) display_->ClearMusic();
         }
     }
 }
@@ -396,7 +347,7 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
                                   const std::string& artist) {
     auto& service = Application::GetInstance().GetAudioService();
     auto* codec = Board::GetInstance().GetAudioCodec();
-    if (!codec || !display_) return false;
+    if (!codec) return false;
     Track track;
     const bool live_radio = title.rfind("radio:", 0) == 0;
     std::string base;
@@ -417,10 +368,7 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
         ESP_LOGW(TAG, "No playable Worker track");
         return false;
     }
-    const std::string lrc = live_radio ? std::string{} : ReadLyrics(base,track.lyric);
     if (Cancelled(generation)) return false;
-    // Starting a new song updates metadata but keeps the audio clock at 0.
-    display_->SetMusicTrack(track.title, track.artist, track.duration_ms, lrc);
     // Register once and tolerate an already-registered MP3 decoder.
     if (esp_audio_dec_check_audio_type(ESP_AUDIO_TYPE_MP3) != ESP_AUDIO_ERR_OK) {
         esp_audio_err_t reg = esp_mp3_dec_register();
@@ -458,20 +406,7 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
     std::vector<int16_t> playback;
     bool ended = false,success = false,decode_error=false;
     uint32_t frames_decoded = 0;
-    bool pause_was_reported = false;
-    int64_t next_spectrum_us = 0;
     while (!Cancelled(generation)) {
-        // Update LVGL on pause without advancing the audio clock.
-        bool paused_now = false;
-        {
-            std::lock_guard<std::mutex> guard(mutex_);
-            paused_now = paused_;
-        }
-        if (paused_now != pause_was_reported) {
-            display_->SetMusicPosition(static_cast<uint32_t>(
-                static_cast<uint64_t>(resampler.elapsed_samples)*1000/kOutputHz), !paused_now);
-            pause_was_reported = paused_now;
-        }
         // TTS/notifications or a paused session must not retain I2S ownership.
         // Recheck state while waiting; Stop() always cancels the wait.
         bool paused_requested;
@@ -484,8 +419,6 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
                 service.EndExternalPlayback(false);
                 owns_output = false;
             }
-            display_->SetMusicPosition(static_cast<uint32_t>(
-                static_cast<uint64_t>(resampler.elapsed_samples)*1000/kOutputHz), false);
             while (!Cancelled(generation)) {
                 bool paused;
                 {
@@ -581,10 +514,6 @@ bool HiLilyMusicPlayer::StreamOne(uint32_t generation, const std::string& title,
                     owns_output = true;
                 }
                 codec->OutputData(playback);
-                if (esp_timer_get_time() >= next_spectrum_us) {
-                    UpdateMusicSpectrum(display_, playback);
-                    next_spectrum_us = esp_timer_get_time() + 110000;
-                }
                 resampler.elapsed_samples+=playback.size();
                 ++frames_decoded;
                 UpdatePosition(generation,static_cast<uint32_t>(

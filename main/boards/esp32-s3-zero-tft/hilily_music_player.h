@@ -7,14 +7,12 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-class HiLilyDisplay;
-
 // Board-only direct Worker MP3 player. Network and I2S operations run off the
 // MCP/server task. All control methods return immediately.
 class HiLilyMusicPlayer {
 public:
     static HiLilyMusicPlayer& GetInstance();
-    void Configure(HiLilyDisplay* display, const char* worker_base);
+    void Configure(const char* worker_base);
     bool Play(std::string title, std::string artist = {});
     bool PlayRadio(std::string station);
     bool Pause();
@@ -38,7 +36,6 @@ private:
     bool AwaitPlay(uint32_t generation);
     void UpdatePosition(uint32_t generation, uint32_t elapsed_ms);
     std::mutex mutex_;
-    HiLilyDisplay* display_ = nullptr;
     std::string worker_base_, requested_title_, requested_artist_;
     bool worker_running_ = false; // guarded by mutex_; set before task creation
     uint32_t generation_ = 0;

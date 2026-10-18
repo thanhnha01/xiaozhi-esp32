@@ -1,5 +1,4 @@
 #include "hilily_home_client.h"
-#include "hilily_display.h"
 #include "hilily_music_player.h"
 #include "application.h"
 #include "config.h"
@@ -15,7 +14,6 @@
 #include <freertos/task.h>
 #include <cJSON.h>
 
-#include <cmath>
 #include <cstring>
 #include <string>
 #include <ctime>
@@ -47,51 +45,6 @@ const char* JsonString(cJSON* parent, const char* name) {
     cJSON* item = cJSON_GetObjectItemCaseSensitive(parent, name);
     return cJSON_IsString(item) && item->valuestring ? item->valuestring : nullptr;
 }
-
-bool FetchHome(HiLilyDisplay* display, const char* url) {
-    RequestContext response;
-    esp_http_client_config_t config = {};
-    config.url = url;
-    config.method = HTTP_METHOD_GET;
-    config.timeout_ms = 9000;
-    config.crt_bundle_attach = esp_crt_bundle_attach;
-    config.event_handler = OnHttpEvent;
-    config.user_data = &response;
-    config.buffer_size = 1024;
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) return false;
-
-    const esp_err_t error = esp_http_client_perform(client);
-    const int status = esp_http_client_get_status_code(client);
-    esp_http_client_cleanup(client);
-    if (error != ESP_OK || status != 200 || response.overflow) {
-        ESP_LOGW(TAG, "Home API failed: %s HTTP %d", esp_err_to_name(error), status);
-        return false;
-    }
-    cJSON* root = cJSON_ParseWithLength(response.payload.data(), response.payload.size());
-    if (!root) return false;
-    cJSON* weather = cJSON_GetObjectItemCaseSensitive(root, "weather");
-    cJSON* lunar = cJSON_GetObjectItemCaseSensitive(root, "lunar");
-    cJSON* temp = cJSON_GetObjectItemCaseSensitive(weather, "temperature_c");
-    const char* schema = JsonString(root, "schema");
-    const char* location = JsonString(root, "location");
-    const char* condition = JsonString(weather, "description");
-    const char* lunar_date = JsonString(lunar, "display");
-    bool valid = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "ok")) &&
-                 schema && strcmp(schema, "hilily.display.home.v1") == 0 &&
-                 location && condition && lunar_date &&
-                 cJSON_IsNumber(temp) && std::isfinite(temp->valuedouble) &&
-                 temp->valuedouble >= -60 && temp->valuedouble <= 65 &&
-                 strlen(location) <= 128 && strlen(condition) <= 128 &&
-                 strlen(lunar_date) <= 48;
-    if (valid) {
-        display->SetHomeData(location, condition, lunar_date, temp->valuedouble);
-    }
-    cJSON_Delete(root);
-    if (!valid) ESP_LOGW(TAG, "Home API returned invalid/incompatible JSON");
-    return valid;
-}
-
 
 // Simple public read-only schedule. The server never returns family/member data.
 // Do not persist server credentials on this device or allocate another TLS task.
@@ -197,20 +150,14 @@ bool VietnamClock(const MorningSchedule& schedule, std::tm& clock,
     return true;
 }
 
-struct HomeTaskArgs { HiLilyDisplay* display; std::string url; };
-
-void HomeTask(void* parameter) {
-    auto* args = static_cast<HomeTaskArgs*>(parameter);
+void MorningScheduleTask(void* parameter) {
+    (void)parameter;
     vTaskDelay(pdMS_TO_TICKS(20000));  // Allow Wi-Fi / TLS to initialize.
     const std::string device_id = DeviceId();
     if (device_id.empty()) {
         ESP_LOGE(TAG, "Cannot determine hardware ID; schedule disabled");
     } else {
-        ESP_LOGI(TAG, "Dashboard morning schedule device ID: %s", device_id.c_str());
-        Application::GetInstance().Schedule([display=args->display, device_id]() {
-            if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle)
-                display->SetChatMessage("system", ("ID lich: " + device_id).c_str());
-        });
+        ESP_LOGI(TAG, "Headless morning schedule device ID: %s", device_id.c_str());
     }
     // This NVS key survives ordinary app-only reflashing and prevents replays
     // on a reboot or network reconnection within the same Vietnam calendar day.
@@ -218,13 +165,8 @@ void HomeTask(void* parameter) {
     // start on its own task. Never keep a writable Settings object alive in
     // this infinite loop: Settings only commits in its destructor.
     MorningSchedule schedule;
-    int64_t next_home = 0, next_schedule = 0;
+    int64_t next_schedule = 0;
     while (true) {
-        const int64_t now = esp_timer_get_time();
-        if (now >= next_home) {
-            const bool ok = FetchHome(args->display, args->url.c_str());
-            next_home = esp_timer_get_time() + (ok ? 20LL*60 : 60LL)*1000000;
-        }
         if (!device_id.empty() && esp_timer_get_time() >= next_schedule) {
             MorningSchedule updated;
             const bool ok = FetchMorningSchedule(device_id, updated);
@@ -256,15 +198,9 @@ void HomeTask(void* parameter) {
 }
 }
 
-void StartHiLilyHomeClient(HiLilyDisplay* display, const char* url) {
-    if (!display || !url || strncmp(url, "https://", 8) != 0) {
-        ESP_LOGE(TAG, "Worker Home URL must be HTTPS");
-        return;
-    }
-    auto* args = new HomeTaskArgs{display, url};
-    const BaseType_t created = xTaskCreate(HomeTask, "lily_home", 6144, args, 2, nullptr);
-    if (created != pdPASS) {
-        ESP_LOGE(TAG, "Unable to start Home API task");
-        delete args;
-    }
+void StartHiLilyMorningScheduleClient() {
+    const BaseType_t created = xTaskCreate(
+        MorningScheduleTask, "lily_schedule", 6144, nullptr, 2, nullptr);
+    if (created != pdPASS)
+        ESP_LOGE(TAG, "Unable to start Morning Briefing schedule task");
 }

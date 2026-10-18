@@ -4,7 +4,7 @@
 #include <driver/gpio.h>
 
 // Waveshare ESP32-S3-Zero / ESP32-S3FH4R2 (4MB flash + 2MB Quad PSRAM).
-// GPIO19/20 remain free for native USB; GPIO0 is the onboard BOOT key.
+// Headless Hi Lily N4R2. GPIO19/20 reserved for native USB, GPIO0 for BOOT.
 #define AUDIO_INPUT_SAMPLE_RATE   16000
 #define AUDIO_OUTPUT_SAMPLE_RATE  24000
 
@@ -24,32 +24,11 @@
 #define WAKE_BUTTON_GPIO         GPIO_NUM_14  // External NO pushbutton to GND
 #define BUILTIN_LED_GPIO         GPIO_NUM_21  // Onboard WS2812
 
-// TFT ST7789 240x240, four-wire SPI (assumed controller).
-// INMP441 SCK / WS / SD use GPIO8 / 9 / 10 (previously TFT RST/CS
-// and battery ADC). TFT RST remains on GPIO17, CS on GPIO18.
-#define DISPLAY_RST_PIN          GPIO_NUM_17
-#define DISPLAY_CS_PIN           GPIO_NUM_18
-#define DISPLAY_DC_PIN           GPIO_NUM_15
 // Battery/charging sensing is disabled. GPIO10 is now INMP441 SD,
 // so never apply a GPIO10 pull-up or initialize ADC there.
 // GPIO16 alone remains unused and is held high with an internal pull-up.
 #define UNUSED_VBUS_GPIO         GPIO_NUM_16
 #define HILILY_WORKER_BASE_URL "https://xiaozhi-master.nguyennha-020201.workers.dev"
-#define HILILY_WORKER_HOME_URL HILILY_WORKER_BASE_URL "/api/display/home"
-#define DISPLAY_MOSI_PIN         GPIO_NUM_11
-#define DISPLAY_CLK_PIN          GPIO_NUM_12
-#define DISPLAY_BACKLIGHT_PIN    GPIO_NUM_13
 
-#define DISPLAY_WIDTH            240
-#define DISPLAY_HEIGHT           240
-#define DISPLAY_SPI_MODE         0
-#define DISPLAY_MIRROR_X         false
-#define DISPLAY_MIRROR_Y         false
-#define DISPLAY_SWAP_XY          false
-#define DISPLAY_INVERT_COLOR     true
-#define DISPLAY_RGB_ORDER        LCD_RGB_ELEMENT_ORDER_RGB
-#define DISPLAY_OFFSET_X         0
-#define DISPLAY_OFFSET_Y         0
-#define DISPLAY_BACKLIGHT_OUTPUT_INVERT false
 
 #endif  // _ESP32_S3_ZERO_TFT_CONFIG_H_

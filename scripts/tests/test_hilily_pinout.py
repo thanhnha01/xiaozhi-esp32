@@ -16,8 +16,8 @@ class HiLilyPinoutTests(unittest.TestCase):
             "AUDIO_I2S_SPK_GPIO_MCLK": 1, "AUDIO_I2S_SPK_GPIO_BCLK": 2,
             "AUDIO_I2S_SPK_GPIO_LRCK": 5, "AUDIO_I2S_SPK_GPIO_DOUT": 6,
             "AUDIO_I2S_MIC_GPIO_SCK": 8, "AUDIO_I2S_MIC_GPIO_WS": 9,
-            "AUDIO_I2S_MIC_GPIO_DIN": 10, "DISPLAY_RST_PIN": 17,
-            "DISPLAY_CS_PIN": 18, "UNUSED_VBUS_GPIO": 16,
+            "AUDIO_I2S_MIC_GPIO_DIN": 10, "UNUSED_VBUS_GPIO": 16,
+            "WAKE_BUTTON_GPIO": 14,
         }
         for name, pin in expected.items():
             self.assertEqual(pins.get(name), pin, name)
@@ -46,6 +46,29 @@ class HiLilyPinoutTests(unittest.TestCase):
         self.assertNotIn("battery.ReadLevel(", board_source)
         self.assertNotIn("gpio_get_level(VBUS_SENSE_GPIO)", board_source)
         self.assertIn("return false;", board_source)
+
+    def test_headless_board_without_tft_dependencies(self):
+        board = (BOARD / "esp32_s3_zero_tft.cc").read_text(encoding="utf-8")
+        config = (BOARD / "config.h").read_text(encoding="utf-8")
+        cmake = (ROOT / "main/CMakeLists.txt").read_text(encoding="utf-8")
+        music = (BOARD / "hilily_music_player.cc").read_text(encoding="utf-8")
+        schedule = (BOARD / "hilily_home_client.cc").read_text(encoding="utf-8")
+        self.assertIn("static NoDisplay display;", board)
+        self.assertIn("StartHiLilyMorningScheduleClient();", board)
+        self.assertIn("music.Configure(HILILY_WORKER_BASE_URL);", board)
+        self.assertIn("FetchMorningSchedule(", schedule)
+        for forbidden in ("HiLilyDisplay", "DISPLAY_", "InitializeSpi(", "InitializeDisplay(",
+                          "esp_lcd_", "GetBacklight", "PwmBacklight"):
+            self.assertNotIn(forbidden, board)
+        for forbidden in ("DISPLAY_", "HILILY_WORKER_HOME_URL"):
+            self.assertNotIn(forbidden, config)
+        for forbidden in ("HiLilyDisplay", "display_", "UpdateMusicSpectrum",
+                          "ReadLyrics(", "SetMusicTrack", "SetMusicPosition"):
+            self.assertNotIn(forbidden, music)
+        self.assertNotIn("FetchHome(", schedule)
+        self.assertIn('set(BOARD_DIR "esp32-s3-zero-tft")', cmake)
+        self.assertFalse((BOARD / "hilily_display.cc").exists())
+        self.assertFalse((BOARD / "hilily_display.h").exists())
 
 
 if __name__ == "__main__":
